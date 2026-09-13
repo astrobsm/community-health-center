@@ -177,12 +177,13 @@ export const ROLE_CODES = [
 
 export type RoleCode = (typeof ROLE_CODES)[number];
 
-const READ_EVERYTHING: Permission[] = PERMISSIONS.filter(
-  (p) =>
-    p.endsWith('.read') ||
-    p === 'analytics.benchmark' ||
-    p === 'audit.read',
-) as Permission[];
+/**
+ * Every read permission in the catalogue, including `audit.read`.
+ *
+ * `analytics.benchmark` is deliberately NOT here: cross-facility comparison is
+ * a distinct capability, granted explicitly to the roles that need it.
+ */
+const READ_EVERYTHING: Permission[] = PERMISSIONS.filter((p) => p.endsWith('.read')) as Permission[];
 
 /**
  * Seeded role templates (spec §58), each built to the least privilege that

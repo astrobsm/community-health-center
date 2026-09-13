@@ -14,7 +14,7 @@ The bias throughout is toward **boring, mature, typed, self-hostable** technolog
 |---|---|---|
 | Language (all tiers) | TypeScript | 5.7+ |
 | Runtime | Node.js LTS | 22.x |
-| Backend framework | NestJS on Fastify | 11.x |
+| Backend framework | NestJS on Fastify | 12.x |
 | ORM / migrations | Prisma | 6.x |
 | Database | PostgreSQL | 16.x |
 | Cache / queue | Redis + BullMQ | 7.x |
@@ -52,7 +52,7 @@ domain model with this much CRUD surface).
 
 ## 3. Backend — NestJS on Fastify
 
-**Decision.** NestJS 11 with the Fastify HTTP adapter.
+**Decision.** NestJS 12 with the Fastify HTTP adapter (Fastify 5).
 
 **Why.**
 

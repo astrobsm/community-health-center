@@ -1,0 +1,359 @@
+import type { KpiDirection } from '@prisma/client';
+
+/**
+ * KPI definitions (spec §38).
+ *
+ * `sourceQueryId` names the version-controlled SQL that computes the value.
+ * A KPI without one cannot be computed at all — which is how "dashboards must
+ * calculate from the authoritative data" becomes a property of the system
+ * rather than a request.
+ *
+ * There are no baselines or targets here: those belong to a facility
+ * (`kpi_assignment`), because a target is a commitment about a place.
+ */
+export const KPI_DEFINITIONS: Array<{
+  code: string;
+  name: string;
+  definition: string;
+  unit: string;
+  domainCode: string;
+  direction: KpiDirection;
+  sourceQueryId: string;
+  defaultPeriod: string;
+}> = [
+  // Clinical volume and access
+  {
+    code: 'PATIENTS_PER_DAY',
+    name: 'Patients per day',
+    definition: 'Distinct encounters per operating day in the period. Counted from encounter records, never from a register tally.',
+    unit: 'patients/day',
+    domainCode: 'CLINICAL',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/patients_per_day@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'NEW_PATIENT_SHARE',
+    name: 'New patient share',
+    definition: 'Proportion of encounters that are a patient\'s first. A proxy for catchment reach.',
+    unit: '%',
+    domainCode: 'CLINICAL',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/new_patient_share@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'AVG_WAITING_TIME',
+    name: 'Average waiting time',
+    definition: 'Median minutes from encounter start to first clinical contact. Computed from timestamps, never entered.',
+    unit: 'minutes',
+    domainCode: 'CLINICAL',
+    direction: 'LOWER_BETTER',
+    sourceQueryId: 'kpi/waiting_time@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'REFERRAL_RATE',
+    name: 'Referral rate',
+    definition: 'Referrals as a proportion of encounters.',
+    unit: '%',
+    domainCode: 'CLINICAL',
+    direction: 'LOWER_BETTER',
+    sourceQueryId: 'kpi/referral_rate@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'SERVICE_AVAILABILITY',
+    name: 'Service availability',
+    definition: 'Proportion of catalogued services marked available at the facility, where availability follows commissioning.',
+    unit: '%',
+    domainCode: 'CLINICAL',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/service_availability@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+
+  // Maternal and child health
+  {
+    code: 'ANC_FOURTH_VISIT_RATE',
+    name: 'ANC fourth-visit completion',
+    definition: 'Proportion of antenatal bookings reaching a fourth visit.',
+    unit: '%',
+    domainCode: 'MATERNAL',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/anc_fourth_visit@v1',
+    defaultPeriod: 'QUARTERLY',
+  },
+  {
+    code: 'FACILITY_DELIVERIES',
+    name: 'Facility deliveries',
+    definition: 'Deliveries conducted at the facility in the period.',
+    unit: 'deliveries',
+    domainCode: 'MATERNAL',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/facility_deliveries@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'IMMUNISATION_COMPLETION',
+    name: 'Immunisation schedule completion',
+    definition: 'Proportion of due doses administered within the schedule window.',
+    unit: '%',
+    domainCode: 'CHILD_HEALTH',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/immunisation_completion@v1',
+    defaultPeriod: 'QUARTERLY',
+  },
+
+  // Pharmacy and supply
+  {
+    code: 'DRUG_AVAILABILITY',
+    name: 'Tracer medicine availability',
+    definition: 'Proportion of tracer items with stock on hand, computed from the stock ledger.',
+    unit: '%',
+    domainCode: 'PHARMACY',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/drug_availability@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'STOCKOUT_DAYS',
+    name: 'Tracer stock-out days',
+    definition: 'Total days in the period on which any tracer item was at zero.',
+    unit: 'days',
+    domainCode: 'PHARMACY',
+    direction: 'LOWER_BETTER',
+    sourceQueryId: 'kpi/stockout_days@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'EXPIRY_WASTAGE_RATE',
+    name: 'Expiry wastage rate',
+    definition: 'Value written off to expiry as a proportion of the value issued.',
+    unit: '%',
+    domainCode: 'PHARMACY',
+    direction: 'LOWER_BETTER',
+    sourceQueryId: 'kpi/expiry_wastage@v1',
+    defaultPeriod: 'QUARTERLY',
+  },
+
+  // Laboratory
+  {
+    code: 'LAB_TURNAROUND',
+    name: 'Laboratory turnaround time',
+    definition: 'Median minutes from sample collection to result verification. Derived from event timestamps, so it cannot be massaged.',
+    unit: 'minutes',
+    domainCode: 'LABORATORY',
+    direction: 'LOWER_BETTER',
+    sourceQueryId: 'kpi/lab_turnaround@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'LAB_TESTS_PERFORMED',
+    name: 'Laboratory tests performed',
+    definition: 'Verified results in the period.',
+    unit: 'tests',
+    domainCode: 'LABORATORY',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/lab_tests_performed@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'CRITICAL_RESULT_ACK_TIME',
+    name: 'Critical result acknowledgement time',
+    definition: 'Median minutes from verification of a critical result to clinician acknowledgement.',
+    unit: 'minutes',
+    domainCode: 'LABORATORY',
+    direction: 'LOWER_BETTER',
+    sourceQueryId: 'kpi/critical_result_ack@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+
+  // Workforce
+  {
+    code: 'STAFF_ATTENDANCE_RATE',
+    name: 'Staff attendance rate',
+    definition: 'Rostered shifts with a matching clock-in, as a proportion of shifts rostered.',
+    unit: '%',
+    domainCode: 'HR',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/staff_attendance@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'STAFF_PUNCTUALITY',
+    name: 'Punctuality',
+    definition: 'Clock-ins within the grace period as a proportion of clock-ins.',
+    unit: '%',
+    domainCode: 'HR',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/staff_punctuality@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'ESTABLISHMENT_FILL_RATE',
+    name: 'Establishment fill rate',
+    definition: 'Posted staff as a proportion of required establishment, by cadre.',
+    unit: '%',
+    domainCode: 'HR',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/establishment_fill@v1',
+    defaultPeriod: 'QUARTERLY',
+  },
+  {
+    code: 'CREDENTIAL_VALIDITY',
+    name: 'Valid professional credentials',
+    definition: 'Clinical staff whose licence is current, as a proportion of clinical staff.',
+    unit: '%',
+    domainCode: 'HR',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/credential_validity@v1',
+    defaultPeriod: 'QUARTERLY',
+  },
+
+  // Finance
+  {
+    code: 'TOTAL_REVENUE',
+    name: 'Total revenue',
+    definition: 'Sum of posted credits to revenue accounts. Derived from the ledger, never from a summary table.',
+    unit: 'NGN',
+    domainCode: 'FINANCE',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/total_revenue@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'OPERATING_MARGIN',
+    name: 'Operating margin',
+    definition: 'Operating surplus as a proportion of revenue, both from posted entries.',
+    unit: '%',
+    domainCode: 'FINANCE',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/operating_margin@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'COLLECTION_RATE',
+    name: 'Collection rate',
+    definition: 'Payments allocated as a proportion of invoiced value.',
+    unit: '%',
+    domainCode: 'FINANCE',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/collection_rate@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'CASH_VARIANCE',
+    name: 'Daily cash variance',
+    definition: 'Absolute variance between counted and expected closing cash, summed over the period.',
+    unit: 'NGN',
+    domainCode: 'FINANCE',
+    direction: 'LOWER_BETTER',
+    sourceQueryId: 'kpi/cash_variance@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'COST_PER_PATIENT',
+    name: 'Cost per patient',
+    definition: 'Direct costs plus operating expenses divided by encounters.',
+    unit: 'NGN',
+    domainCode: 'FINANCE',
+    direction: 'LOWER_BETTER',
+    sourceQueryId: 'kpi/cost_per_patient@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+
+  // Quality and experience
+  {
+    code: 'PATIENT_SATISFACTION',
+    name: 'Patient satisfaction',
+    definition: 'Mean overall score from patient experience surveys in the period.',
+    unit: 'score',
+    domainCode: 'QUALITY',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/patient_satisfaction@v1',
+    defaultPeriod: 'QUARTERLY',
+  },
+  {
+    code: 'COMPLAINT_RESOLUTION_TIME',
+    name: 'Complaint resolution time',
+    definition: 'Median days from complaint receipt to resolution.',
+    unit: 'days',
+    domainCode: 'QUALITY',
+    direction: 'LOWER_BETTER',
+    sourceQueryId: 'kpi/complaint_resolution@v1',
+    defaultPeriod: 'QUARTERLY',
+  },
+  {
+    code: 'INCIDENT_RATE',
+    name: 'Reported incident rate',
+    definition: 'Incidents per 1,000 encounters. Note that a RISING rate can indicate improving reporting culture, not worsening safety; read it with the severity mix.',
+    unit: 'per 1,000',
+    domainCode: 'QUALITY',
+    direction: 'LOWER_BETTER',
+    sourceQueryId: 'kpi/incident_rate@v1',
+    defaultPeriod: 'QUARTERLY',
+  },
+  {
+    code: 'DOCUMENTATION_COMPLETENESS',
+    name: 'Clinical documentation completeness',
+    definition: 'Closed encounters with a diagnosis and a signed note, as a proportion of closed encounters.',
+    unit: '%',
+    domainCode: 'QUALITY',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/documentation_completeness@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+
+  // Implementation and public value
+  {
+    code: 'CAPEX_COMMISSIONED_RATE',
+    name: 'Capital commissioned rate',
+    definition: 'Value of commissioned assets as a proportion of capital spent. The gap between spent and commissioned is what a partnership review asks about.',
+    unit: '%',
+    domainCode: 'PROJECT',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/capex_commissioned@v1',
+    defaultPeriod: 'QUARTERLY',
+  },
+  {
+    code: 'PROJECT_ON_SCHEDULE',
+    name: 'Projects on schedule',
+    definition: 'Active projects whose completion is at or ahead of planned, as a proportion of active projects.',
+    unit: '%',
+    domainCode: 'PROJECT',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/project_on_schedule@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'GOVERNMENT_ENTITLEMENT',
+    name: 'Government entitlement recognised',
+    definition: 'Value recognised to the government under the waterfall in force for the period.',
+    unit: 'NGN',
+    domainCode: 'PARTNERSHIP',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/government_entitlement@v1',
+    defaultPeriod: 'QUARTERLY',
+  },
+  {
+    code: 'CAPITAL_RECOVERED',
+    name: 'Partner capital recovered',
+    definition: 'Cumulative recovery events as a proportion of eligible investment.',
+    unit: '%',
+    domainCode: 'PARTNERSHIP',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/capital_recovered@v1',
+    defaultPeriod: 'QUARTERLY',
+  },
+  {
+    code: 'DATA_QUALITY_SCORE',
+    name: 'Data quality score',
+    definition: 'Composite of completeness, duplicate rate, impossible values, and reconciliation discrepancies (spec §47).',
+    unit: '%',
+    domainCode: 'DATA',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/data_quality@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+];

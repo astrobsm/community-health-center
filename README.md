@@ -56,7 +56,7 @@ its full revitalisation history, read-only, because the baseline is immutable.
 | Layer | Choice |
 |---|---|
 | Language | TypeScript 5.7 (server, client, contracts) |
-| Backend | NestJS 11 on Fastify, Node 22 |
+| Backend | NestJS 12 on Fastify, Node 22 |
 | Database | PostgreSQL 16 — RLS, append-only ledgers, immutability triggers |
 | ORM | Prisma 6 for writes; hand-written SQL for analytics |
 | Cache / queue | Redis 7 + BullMQ |

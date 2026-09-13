@@ -10,3 +10,4 @@ export * from './classification.js';
 export * from './money.js';
 export * from './permissions.js';
 export * from './common.js';
+export * from './auth.js';

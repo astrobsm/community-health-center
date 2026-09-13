@@ -102,6 +102,7 @@ export const BusinessErrorCode = {
   RESULT_NOT_VERIFIED: 'result-not-verified',
   OFFLINE_LIMIT_REACHED: 'offline-limit-reached',
   SMALL_CELL_SUPPRESSED: 'small-cell-suppressed',
+  REASON_REQUIRED: 'reason-required',
 } as const;
 export type BusinessErrorCode = (typeof BusinessErrorCode)[keyof typeof BusinessErrorCode];
 

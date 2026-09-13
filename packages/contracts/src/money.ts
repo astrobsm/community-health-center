@@ -136,7 +136,8 @@ export function allocate(total: Money, weights: readonly number[]): Money[] {
   const negative = total.amountMinor < 0n;
   const magnitude = negative ? -total.amountMinor : total.amountMinor;
 
-  const SCALE = 1_000_000n;
+  // Weights are normalised to a fixed integer scale so the whole allocation is
+  // carried out in exact integer arithmetic.
   const scaledWeights = weights.map((w) => BigInt(Math.round((w / totalWeight) * 1_000_000)));
   const scaledTotal = scaledWeights.reduce((acc, w) => acc + w, 0n);
 
