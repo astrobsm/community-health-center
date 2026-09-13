@@ -1,0 +1,835 @@
+// =============================================================================
+// EXEC — physical facility, projects, procurement, assets, commissioning
+//
+// Where a plan becomes a building, a centrifuge, and a working laboratory.
+// The chain here is what proves money produced something real (doc 15 §1).
+// =============================================================================
+
+enum ConditionRating {
+  GOOD
+  FAIR
+  POOR
+  UNUSABLE
+  NOT_ASSESSED
+
+  @@schema("exec")
+}
+
+model Room {
+  id             String          @id @default(uuid()) @db.Uuid
+  facilityId     String          @map("facility_id") @db.Uuid
+  organisationId String          @map("organisation_id") @db.Uuid
+  departmentId   String?         @map("department_id") @db.Uuid
+  code           String
+  name           String
+  purpose        String?
+  areaSqm        Decimal?        @map("area_sqm") @db.Decimal(10, 2)
+  condition      ConditionRating @default(NOT_ASSESSED)
+  isUsable       Boolean         @default(false) @map("is_usable")
+  notes          String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  facility            Facility             @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  department          Department?          @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  infrastructureItems InfrastructureItem[]
+  equipmentAssets     EquipmentAsset[]
+  stockLocations      StockLocation[]
+
+  @@unique([facilityId, code])
+  @@index([organisationId, facilityId])
+  @@map("room")
+  @@schema("exec")
+}
+
+model InfrastructureItem {
+  id                 String             @id @default(uuid()) @db.Uuid
+  facilityId         String             @map("facility_id") @db.Uuid
+  organisationId     String             @map("organisation_id") @db.Uuid
+  roomId             String?            @map("room_id") @db.Uuid
+  category           String
+  description        String
+  condition          ConditionRating    @default(NOT_ASSESSED)
+  /// Estimated remediation cost — ESTIMATED until a quotation exists.
+  estimatedCostMinor BigInt?            @map("estimated_cost_minor")
+  currency           String             @default("NGN") @db.Char(3)
+  classification     DataClassification @default(ESTIMATED)
+  assessedAt         DateTime?          @map("assessed_at") @db.Timestamptz(6)
+  assessedBy         String?            @map("assessed_by") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  room Room? @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@index([facilityId, category])
+  @@map("infrastructure_item")
+  @@schema("exec")
+}
+
+enum UtilityType {
+  GRID_POWER
+  GENERATOR
+  SOLAR
+  BOREHOLE
+  PIPED_WATER
+  RAINWATER
+  INTERNET
+  TELEPHONE
+  WASTE_DISPOSAL
+  SEWAGE
+  COLD_CHAIN
+
+  @@schema("exec")
+}
+
+model Utility {
+  id                   String             @id @default(uuid()) @db.Uuid
+  facilityId           String             @map("facility_id") @db.Uuid
+  organisationId       String             @map("organisation_id") @db.Uuid
+  utilityType          UtilityType        @map("utility_type")
+  isAvailable          Boolean            @default(false) @map("is_available")
+  /// Hours per day actually available. "We have a generator" and "we have
+  /// power" are different facts; this column keeps them apart.
+  availableHoursPerDay Decimal?           @map("available_hours_per_day") @db.Decimal(4, 1)
+  condition            ConditionRating    @default(NOT_ASSESSED)
+  capacityNote         String?            @map("capacity_note")
+  monthlyCostMinor     BigInt?            @map("monthly_cost_minor")
+  currency             String             @default("NGN") @db.Char(3)
+  classification       DataClassification @default(REPORTED)
+  notes                String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  facility Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  @@unique([facilityId, utilityType])
+  @@index([organisationId, facilityId])
+  @@map("utility")
+  @@schema("exec")
+}
+
+// -----------------------------------------------------------------------------
+// Projects — spec §20
+// -----------------------------------------------------------------------------
+
+enum ProjectStatus {
+  DRAFT
+  APPROVED
+  IN_PROGRESS
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+
+  @@schema("exec")
+}
+
+model CapitalProject {
+  id                String        @id @default(uuid()) @db.Uuid
+  facilityId        String        @map("facility_id") @db.Uuid
+  organisationId    String        @map("organisation_id") @db.Uuid
+  /// Lineage back to the observed problem. A project without one must record
+  /// unplannedReason (doc 22 §2).
+  recommendationId  String?       @map("recommendation_id") @db.Uuid
+  capexLineId       String?       @map("capex_line_id") @db.Uuid
+  unplannedReason   String?       @map("unplanned_reason")
+  reference         String
+  name              String
+  description       String?
+  category          CapexCategory
+  priorityClass     PriorityClass @default(P3) @map("priority_class")
+  status            ProjectStatus @default(DRAFT)
+  ownerUserId       String?       @map("owner_user_id") @db.Uuid
+  plannedStart      DateTime?     @map("planned_start") @db.Date
+  plannedEnd        DateTime?     @map("planned_end") @db.Date
+  actualStart       DateTime?     @map("actual_start") @db.Date
+  actualEnd         DateTime?     @map("actual_end") @db.Date
+  /// Derived from weighted task completion. Never typed (doc 15 §3).
+  completionPercent Decimal       @default(0) @map("completion_percent") @db.Decimal(5, 2)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  facility         Facility              @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  recommendation   Recommendation?       @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  capexLine        CapexLine?            @relation(fields: [capexLineId], references: [id], onDelete: SetNull)
+  phases           ProjectPhase[]
+  milestones       ProjectMilestone[]
+  budgets          ProjectBudget[]
+  expenses         ProjectExpense[]
+  evidence         ProjectEvidence[]
+  purchaseRequests PurchaseRequest[]
+  risks            Risk[]
+  commissioning    CommissioningRecord[]
+
+  @@unique([facilityId, reference])
+  @@index([organisationId, facilityId, status])
+  @@map("capital_project")
+  @@schema("exec")
+}
+
+model ProjectPhase {
+  id             String        @id @default(uuid()) @db.Uuid
+  projectId      String        @map("project_id") @db.Uuid
+  organisationId String        @map("organisation_id") @db.Uuid
+  sequence       Int
+  name           String
+  plannedStart   DateTime?     @map("planned_start") @db.Date
+  plannedEnd     DateTime?     @map("planned_end") @db.Date
+  actualStart    DateTime?     @map("actual_start") @db.Date
+  actualEnd      DateTime?     @map("actual_end") @db.Date
+  status         ProjectStatus @default(DRAFT)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  project CapitalProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks   ProjectTask[]
+
+  @@unique([projectId, sequence])
+  @@map("project_phase")
+  @@schema("exec")
+}
+
+enum TaskStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+  CANCELLED
+
+  @@schema("exec")
+}
+
+model ProjectTask {
+  id              String     @id @default(uuid()) @db.Uuid
+  phaseId         String     @map("phase_id") @db.Uuid
+  organisationId  String     @map("organisation_id") @db.Uuid
+  facilityId      String     @map("facility_id") @db.Uuid
+  reference       String
+  name            String
+  description     String?
+  ownerUserId     String?    @map("owner_user_id") @db.Uuid
+  status          TaskStatus @default(NOT_STARTED)
+  /// Relative contribution to the project's completion percentage.
+  weight          Decimal    @default(1) @db.Decimal(8, 4)
+  percentComplete Decimal    @default(0) @map("percent_complete") @db.Decimal(5, 2)
+  plannedStart    DateTime?  @map("planned_start") @db.Date
+  plannedEnd      DateTime?  @map("planned_end") @db.Date
+  actualStart     DateTime?  @map("actual_start") @db.Date
+  actualEnd       DateTime?  @map("actual_end") @db.Date
+  estimatedDays   Decimal?   @map("estimated_days") @db.Decimal(8, 2)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  phase        ProjectPhase            @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  dependencies ProjectTaskDependency[] @relation("DependentTask")
+  dependents   ProjectTaskDependency[] @relation("PredecessorTask")
+
+  @@unique([facilityId, reference])
+  @@index([phaseId, status])
+  @@map("project_task")
+  @@schema("exec")
+}
+
+enum DependencyType {
+  FS // finish-to-start
+  SS // start-to-start
+  FF // finish-to-finish
+  SF // start-to-finish
+
+  @@schema("exec")
+}
+
+/// A DAG. Cycles are rejected on insert; critical path and slack are computed
+/// on demand (doc 15 §3).
+model ProjectTaskDependency {
+  id             String         @id @default(uuid()) @db.Uuid
+  taskId         String         @map("task_id") @db.Uuid
+  predecessorId  String         @map("predecessor_id") @db.Uuid
+  organisationId String         @map("organisation_id") @db.Uuid
+  dependencyType DependencyType @default(FS) @map("dependency_type")
+  lagDays        Int            @default(0) @map("lag_days")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  task        ProjectTask @relation("DependentTask", fields: [taskId], references: [id], onDelete: Cascade)
+  predecessor ProjectTask @relation("PredecessorTask", fields: [predecessorId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, predecessorId])
+  @@map("project_task_dependency")
+  @@schema("exec")
+}
+
+model ProjectMilestone {
+  id               String    @id @default(uuid()) @db.Uuid
+  projectId        String    @map("project_id") @db.Uuid
+  organisationId   String    @map("organisation_id") @db.Uuid
+  name             String
+  dueDate          DateTime? @map("due_date") @db.Date
+  achievedDate     DateTime? @map("achieved_date") @db.Date
+  /// Milestones that release a payment must be verifiable, not merely
+  /// declared.
+  verificationNote String?   @map("verification_note")
+  verifiedBy       String?   @map("verified_by") @db.Uuid
+  isPaymentLinked  Boolean   @default(false) @map("is_payment_linked")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  project CapitalProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, dueDate])
+  @@map("project_milestone")
+  @@schema("exec")
+}
+
+/// Budgeted -> approved -> committed. `spent` is deliberately absent: it is
+/// derived from posted expenses and payments (doc 15 §4).
+model ProjectBudget {
+  id             String    @id @default(uuid()) @db.Uuid
+  projectId      String    @map("project_id") @db.Uuid
+  organisationId String    @map("organisation_id") @db.Uuid
+  facilityId     String    @map("facility_id") @db.Uuid
+  budgetLineId   String?   @map("budget_line_id") @db.Uuid
+  budgetedMinor  BigInt    @default(0) @map("budgeted_minor")
+  approvedMinor  BigInt    @default(0) @map("approved_minor")
+  committedMinor BigInt    @default(0) @map("committed_minor")
+  currency       String    @default("NGN") @db.Char(3)
+  approvedBy     String?   @map("approved_by") @db.Uuid
+  approvedAt     DateTime? @map("approved_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  project    CapitalProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  budgetLine BudgetLine?    @relation(fields: [budgetLineId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@map("project_budget")
+  @@schema("exec")
+}
+
+model ProjectExpense {
+  id                String             @id @default(uuid()) @db.Uuid
+  projectId         String             @map("project_id") @db.Uuid
+  organisationId    String             @map("organisation_id") @db.Uuid
+  facilityId        String             @map("facility_id") @db.Uuid
+  description       String
+  amountMinor       BigInt             @map("amount_minor")
+  currency          String             @default("NGN") @db.Char(3)
+  incurredOn        DateTime           @map("incurred_on") @db.Date
+  /// Links the expense to the money that actually left the account. An expense
+  /// without a payment is a commitment, not expenditure.
+  paymentId         String?            @map("payment_id") @db.Uuid
+  supplierInvoiceId String?            @map("supplier_invoice_id") @db.Uuid
+  approvedBy        String?            @map("approved_by") @db.Uuid
+  approvedAt        DateTime?          @map("approved_at") @db.Timestamptz(6)
+  classification    DataClassification @default(ACTUAL)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  project CapitalProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  payment Payment?       @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, incurredOn])
+  @@map("project_expense")
+  @@schema("exec")
+}
+
+model ProjectEvidence {
+  id             String        @id @default(uuid()) @db.Uuid
+  projectId      String        @map("project_id") @db.Uuid
+  evidenceId     String        @map("evidence_id") @db.Uuid
+  organisationId String        @map("organisation_id") @db.Uuid
+  stage          EvidenceStage
+  caption        String?
+  linkedAt       DateTime      @default(now()) @map("linked_at") @db.Timestamptz(6)
+  linkedBy       String?       @map("linked_by") @db.Uuid
+
+  project  CapitalProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  evidence Evidence       @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, evidenceId])
+  @@index([projectId, stage])
+  @@map("project_evidence")
+  @@schema("exec")
+}
+
+// -----------------------------------------------------------------------------
+// Procurement — spec §21. Full audit trail, three-way match.
+// -----------------------------------------------------------------------------
+
+model Supplier {
+  id                         String       @id @default(uuid()) @db.Uuid
+  organisationId             String       @map("organisation_id") @db.Uuid
+  code                       String
+  name                       String
+  contactPerson              String?      @map("contact_person")
+  email                      String?
+  phone                      String?
+  address                    String?
+  taxId                      String?      @map("tax_id")
+  bankName                   String?      @map("bank_name")
+  bankAccountNumberEncrypted String?      @map("bank_account_number_encrypted")
+  status                     RecordStatus @default(ACTIVE)
+  notes                      String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  organisation     Organisation      @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  quotations       Quotation[]
+  purchaseOrders   PurchaseOrder[]
+  invoices         SupplierInvoice[]
+  inventoryBatches InventoryBatch[]
+
+  @@unique([organisationId, code])
+  @@index([organisationId, status])
+  @@map("supplier")
+  @@schema("exec")
+}
+
+enum ProcurementStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  QUOTING
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  INVOICED
+  PAID
+  CANCELLED
+
+  @@schema("exec")
+}
+
+model PurchaseRequest {
+  id              String            @id @default(uuid()) @db.Uuid
+  organisationId  String            @map("organisation_id") @db.Uuid
+  facilityId      String            @map("facility_id") @db.Uuid
+  projectId       String?           @map("project_id") @db.Uuid
+  reference       String
+  title           String
+  justification   String?
+  status          ProcurementStatus @default(DRAFT)
+  requestedBy     String?           @map("requested_by") @db.Uuid
+  requestedAt     DateTime?         @map("requested_at") @db.Timestamptz(6)
+  /// Segregation of duties: the approver may not be the requester
+  /// (doc 18 §9). Checked in the service layer and tested.
+  approvedBy      String?           @map("approved_by") @db.Uuid
+  approvedAt      DateTime?         @map("approved_at") @db.Timestamptz(6)
+  rejectionReason String?           @map("rejection_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  project    CapitalProject?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  lines      PurchaseRequestLine[]
+  quotations Quotation[]
+  orders     PurchaseOrder[]
+
+  @@unique([organisationId, reference])
+  @@index([facilityId, status])
+  @@map("purchase_request")
+  @@schema("exec")
+}
+
+model PurchaseRequestLine {
+  id                     String  @id @default(uuid()) @db.Uuid
+  purchaseRequestId      String  @map("purchase_request_id") @db.Uuid
+  organisationId         String  @map("organisation_id") @db.Uuid
+  inventoryItemId        String? @map("inventory_item_id") @db.Uuid
+  description            String
+  quantity               Decimal @db.Decimal(14, 3)
+  unit                   String?
+  estimatedUnitCostMinor BigInt? @map("estimated_unit_cost_minor")
+  currency               String  @default("NGN") @db.Char(3)
+  /// Capital items become assets on receipt; consumables become stock batches.
+  isCapitalItem          Boolean @default(false) @map("is_capital_item")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  purchaseRequest PurchaseRequest @relation(fields: [purchaseRequestId], references: [id], onDelete: Cascade)
+  inventoryItem   InventoryItem?  @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+
+  @@index([purchaseRequestId])
+  @@map("purchase_request_line")
+  @@schema("exec")
+}
+
+model Quotation {
+  id                String    @id @default(uuid()) @db.Uuid
+  purchaseRequestId String    @map("purchase_request_id") @db.Uuid
+  supplierId        String    @map("supplier_id") @db.Uuid
+  organisationId    String    @map("organisation_id") @db.Uuid
+  reference         String?
+  receivedOn        DateTime? @map("received_on") @db.Date
+  validUntil        DateTime? @map("valid_until") @db.Date
+  totalMinor        BigInt    @default(0) @map("total_minor")
+  currency          String    @default("NGN") @db.Char(3)
+  isSelected        Boolean   @default(false) @map("is_selected")
+  /// Why this supplier was chosen. Selecting other than the lowest quotation
+  /// without a reason is exactly what a procurement audit looks for.
+  selectionReason   String?   @map("selection_reason")
+  notes             String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  purchaseRequest PurchaseRequest @relation(fields: [purchaseRequestId], references: [id], onDelete: Cascade)
+  supplier        Supplier        @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  lines           QuotationLine[]
+
+  @@index([purchaseRequestId, isSelected])
+  @@map("quotation")
+  @@schema("exec")
+}
+
+model QuotationLine {
+  id             String  @id @default(uuid()) @db.Uuid
+  quotationId    String  @map("quotation_id") @db.Uuid
+  organisationId String  @map("organisation_id") @db.Uuid
+  description    String
+  quantity       Decimal @db.Decimal(14, 3)
+  unit           String?
+  unitPriceMinor BigInt  @map("unit_price_minor")
+  lineTotalMinor BigInt  @map("line_total_minor")
+  currency       String  @default("NGN") @db.Char(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  @@index([quotationId])
+  @@map("quotation_line")
+  @@schema("exec")
+}
+
+model PurchaseOrder {
+  id                 String            @id @default(uuid()) @db.Uuid
+  purchaseRequestId  String?           @map("purchase_request_id") @db.Uuid
+  supplierId         String            @map("supplier_id") @db.Uuid
+  organisationId     String            @map("organisation_id") @db.Uuid
+  facilityId         String            @map("facility_id") @db.Uuid
+  projectId          String?           @map("project_id") @db.Uuid
+  reference          String
+  status             ProcurementStatus @default(ORDERED)
+  orderedOn          DateTime          @map("ordered_on") @db.Date
+  expectedDelivery   DateTime?         @map("expected_delivery") @db.Date
+  totalMinor         BigInt            @default(0) @map("total_minor")
+  currency           String            @default("NGN") @db.Char(3)
+  terms              String?
+  issuedBy           String?           @map("issued_by") @db.Uuid
+  cancelledAt        DateTime?         @map("cancelled_at") @db.Timestamptz(6)
+  cancellationReason String?           @map("cancellation_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  purchaseRequest PurchaseRequest?    @relation(fields: [purchaseRequestId], references: [id], onDelete: SetNull)
+  supplier        Supplier            @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  lines           PurchaseOrderLine[]
+  goodsReceipts   GoodsReceipt[]
+  invoices        SupplierInvoice[]
+
+  @@unique([organisationId, reference])
+  @@index([facilityId, status])
+  @@map("purchase_order")
+  @@schema("exec")
+}
+
+model PurchaseOrderLine {
+  id              String  @id @default(uuid()) @db.Uuid
+  purchaseOrderId String  @map("purchase_order_id") @db.Uuid
+  organisationId  String  @map("organisation_id") @db.Uuid
+  inventoryItemId String? @map("inventory_item_id") @db.Uuid
+  description     String
+  quantityOrdered Decimal @map("quantity_ordered") @db.Decimal(14, 3)
+  unit            String?
+  unitPriceMinor  BigInt  @map("unit_price_minor")
+  lineTotalMinor  BigInt  @map("line_total_minor")
+  currency        String  @default("NGN") @db.Char(3)
+  isCapitalItem   Boolean @default(false) @map("is_capital_item")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  purchaseOrder     PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  inventoryItem     InventoryItem?     @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  goodsReceiptLines GoodsReceiptLine[]
+
+  @@index([purchaseOrderId])
+  @@map("purchase_order_line")
+  @@schema("exec")
+}
+
+model GoodsReceipt {
+  id              String   @id @default(uuid()) @db.Uuid
+  purchaseOrderId String   @map("purchase_order_id") @db.Uuid
+  organisationId  String   @map("organisation_id") @db.Uuid
+  facilityId      String   @map("facility_id") @db.Uuid
+  reference       String
+  receivedOn      DateTime @map("received_on") @db.Date
+  receivedBy      String?  @map("received_by") @db.Uuid
+  inspectedBy     String?  @map("inspected_by") @db.Uuid
+  inspectionNote  String?  @map("inspection_note")
+  deliveryNoteRef String?  @map("delivery_note_ref")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  purchaseOrder PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  lines         GoodsReceiptLine[]
+
+  @@unique([organisationId, reference])
+  @@index([facilityId, receivedOn])
+  @@map("goods_receipt")
+  @@schema("exec")
+}
+
+/// The fork in the road: a capital line becomes an EquipmentAsset,
+/// a consumable line becomes an InventoryBatch. Never both, never neither
+/// (acceptance criterion E).
+model GoodsReceiptLine {
+  id                  String    @id @default(uuid()) @db.Uuid
+  goodsReceiptId      String    @map("goods_receipt_id") @db.Uuid
+  purchaseOrderLineId String?   @map("purchase_order_line_id") @db.Uuid
+  organisationId      String    @map("organisation_id") @db.Uuid
+  facilityId          String    @map("facility_id") @db.Uuid
+  description         String
+  quantityReceived    Decimal   @map("quantity_received") @db.Decimal(14, 3)
+  quantityAccepted    Decimal   @map("quantity_accepted") @db.Decimal(14, 3)
+  quantityRejected    Decimal   @default(0) @map("quantity_rejected") @db.Decimal(14, 3)
+  rejectionReason     String?   @map("rejection_reason")
+  unitCostMinor       BigInt    @map("unit_cost_minor")
+  currency            String    @default("NGN") @db.Char(3)
+  batchNumber         String?   @map("batch_number")
+  expiryDate          DateTime? @map("expiry_date") @db.Date
+  isCapitalItem       Boolean   @default(false) @map("is_capital_item")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  goodsReceipt      GoodsReceipt       @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+  purchaseOrderLine PurchaseOrderLine? @relation(fields: [purchaseOrderLineId], references: [id], onDelete: SetNull)
+  inventoryBatches  InventoryBatch[]
+  equipmentAssets   EquipmentAsset[]
+
+  @@index([goodsReceiptId])
+  @@map("goods_receipt_line")
+  @@schema("exec")
+}
+
+enum InvoiceMatchStatus {
+  UNMATCHED
+  MATCHED
+  VARIANCE
+  BLOCKED
+
+  @@schema("exec")
+}
+
+model SupplierInvoice {
+  id                String             @id @default(uuid()) @db.Uuid
+  supplierId        String             @map("supplier_id") @db.Uuid
+  purchaseOrderId   String?            @map("purchase_order_id") @db.Uuid
+  organisationId    String             @map("organisation_id") @db.Uuid
+  facilityId        String             @map("facility_id") @db.Uuid
+  invoiceNumber     String             @map("invoice_number")
+  invoiceDate       DateTime           @map("invoice_date") @db.Date
+  dueDate           DateTime?          @map("due_date") @db.Date
+  amountMinor       BigInt             @map("amount_minor")
+  taxMinor          BigInt             @default(0) @map("tax_minor")
+  totalMinor        BigInt             @map("total_minor")
+  currency          String             @default("NGN") @db.Char(3)
+  /// Three-way match: PO <-> GRN <-> invoice. A variance beyond tolerance
+  /// blocks payment (doc 14 §7).
+  matchStatus       InvoiceMatchStatus @default(UNMATCHED) @map("match_status")
+  matchVarianceNote String?            @map("match_variance_note")
+  approvedBy        String?            @map("approved_by") @db.Uuid
+  approvedAt        DateTime?          @map("approved_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  supplier      Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  payments      Payment[]
+
+  @@unique([supplierId, invoiceNumber])
+  @@index([facilityId, matchStatus])
+  @@map("supplier_invoice")
+  @@schema("exec")
+}
+
+// -----------------------------------------------------------------------------
+// Assets and commissioning — spec §22
+// -----------------------------------------------------------------------------
+
+enum CommissioningStatus {
+  NOT_RECEIVED
+  RECEIVED
+  INSTALLED
+  TESTED
+  COMMISSIONED
+  DECOMMISSIONED
+
+  @@schema("exec")
+}
+
+/// A centrifuge in a box is not laboratory capacity. `commissioningStatus`
+/// is what separates delivered from operational (doc 15 §6).
+model EquipmentAsset {
+  id                  String              @id @default(uuid()) @db.Uuid
+  facilityId          String              @map("facility_id") @db.Uuid
+  organisationId      String              @map("organisation_id") @db.Uuid
+  roomId              String?             @map("room_id") @db.Uuid
+  goodsReceiptLineId  String?             @map("goods_receipt_line_id") @db.Uuid
+  assetTag            String              @map("asset_tag")
+  name                String
+  category            String
+  manufacturer        String?
+  model               String?
+  serialNumber        String?             @map("serial_number")
+  fundingSource       String?             @map("funding_source")
+  purchaseDate        DateTime?           @map("purchase_date") @db.Date
+  costMinor           BigInt?             @map("cost_minor")
+  currency            String              @default("NGN") @db.Char(3)
+  condition           ConditionRating     @default(NOT_ASSESSED)
+  commissioningStatus CommissioningStatus @default(NOT_RECEIVED) @map("commissioning_status")
+  warrantyExpiresOn   DateTime?           @map("warranty_expires_on") @db.Date
+  expectedLifeYears   Int?                @map("expected_life_years")
+  classification      DataClassification  @default(ACTUAL)
+  notes               String?
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  version   Int       @default(1)
+
+  facility         Facility              @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  room             Room?                 @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  goodsReceiptLine GoodsReceiptLine?     @relation(fields: [goodsReceiptLineId], references: [id], onDelete: SetNull)
+  maintenance      AssetMaintenance[]
+  commissioning    CommissioningRecord[]
+
+  @@unique([facilityId, assetTag])
+  @@index([organisationId, facilityId, commissioningStatus])
+  @@map("equipment_asset")
+  @@schema("exec")
+}
+
+enum MaintenanceType {
+  PREVENTIVE
+  CORRECTIVE
+  CALIBRATION
+  INSPECTION
+
+  @@schema("exec")
+}
+
+model AssetMaintenance {
+  id              String          @id @default(uuid()) @db.Uuid
+  assetId         String          @map("asset_id") @db.Uuid
+  organisationId  String          @map("organisation_id") @db.Uuid
+  facilityId      String          @map("facility_id") @db.Uuid
+  maintenanceType MaintenanceType @map("maintenance_type")
+  scheduledFor    DateTime?       @map("scheduled_for") @db.Date
+  performedOn     DateTime?       @map("performed_on") @db.Date
+  performedBy     String?         @map("performed_by")
+  description     String?
+  costMinor       BigInt?         @map("cost_minor")
+  currency        String          @default("NGN") @db.Char(3)
+  outcome         String?
+  nextDueOn       DateTime?       @map("next_due_on") @db.Date
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  asset EquipmentAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId, scheduledFor])
+  @@index([facilityId, nextDueOn])
+  @@map("asset_maintenance")
+  @@schema("exec")
+}
+
+/// Every check must pass before an asset counts toward service readiness.
+model CommissioningRecord {
+  id                   String    @id @default(uuid()) @db.Uuid
+  organisationId       String    @map("organisation_id") @db.Uuid
+  facilityId           String    @map("facility_id") @db.Uuid
+  assetId              String?   @map("asset_id") @db.Uuid
+  projectId            String?   @map("project_id") @db.Uuid
+  reference            String
+  functionalTestPassed Boolean   @default(false) @map("functional_test_passed")
+  safetyCheckPassed    Boolean   @default(false) @map("safety_check_passed")
+  staffTrained         Boolean   @default(false) @map("staff_trained")
+  consumablesAvailable Boolean   @default(false) @map("consumables_available")
+  utilitiesConnected   Boolean   @default(false) @map("utilities_connected")
+  commissionedAt       DateTime? @map("commissioned_at") @db.Timestamptz(6)
+  commissionedBy       String?   @map("commissioned_by") @db.Uuid
+  witnessedBy          String?   @map("witnessed_by")
+  notes                String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  asset   EquipmentAsset? @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  project CapitalProject? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, reference])
+  @@index([facilityId, commissionedAt])
+  @@map("commissioning_record")
+  @@schema("exec")
+}

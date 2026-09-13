@@ -1,0 +1,579 @@
+// =============================================================================
+// FIN — the financial ledger. The financial truth.
+//
+// Double-entry, integer minor units, append-only. Posted records are never
+// deleted or edited; corrections are reversals (doc 12).
+// =============================================================================
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  DIRECT_COST
+  EXPENSE
+  DISTRIBUTION
+
+  @@schema("fin")
+}
+
+enum NormalBalance {
+  DEBIT
+  CREDIT
+
+  @@schema("fin")
+}
+
+/// Hierarchical chart of accounts, seeded as configurable reference data.
+model FinancialAccount {
+  id              String        @id @default(uuid()) @db.Uuid
+  organisationId  String        @map("organisation_id") @db.Uuid
+  parentId        String?       @map("parent_id") @db.Uuid
+  code            String
+  name            String
+  accountType     AccountType   @map("account_type")
+  normalBalance   NormalBalance @map("normal_balance")
+  /// A posting account accepts journal lines; a heading account does not.
+  isPostable      Boolean       @default(true) @map("is_postable")
+  isSystemManaged Boolean       @default(false) @map("is_system_managed")
+  status          RecordStatus  @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  parent       FinancialAccount?  @relation("AccountTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children     FinancialAccount[] @relation("AccountTree")
+  journalLines JournalLine[]
+  budgetLines  BudgetLine[]
+
+  @@unique([organisationId, code])
+  @@index([organisationId, accountType])
+  @@map("financial_account")
+  @@schema("fin")
+}
+
+enum PeriodStatus {
+  OPEN
+  CLOSING
+  CLOSED
+
+  @@schema("fin")
+}
+
+/// A closed period rejects new postings — enforced by a database trigger.
+/// Reopening requires finance.close_period, a reason, and an audit record.
+model FinancialPeriod {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  facilityId     String       @map("facility_id") @db.Uuid
+  name           String
+  startDate      DateTime     @map("start_date") @db.Date
+  endDate        DateTime     @map("end_date") @db.Date
+  status         PeriodStatus @default(OPEN)
+  closedBy       String?      @map("closed_by") @db.Uuid
+  closedAt       DateTime?    @map("closed_at") @db.Timestamptz(6)
+  reopenedBy     String?      @map("reopened_by") @db.Uuid
+  reopenedAt     DateTime?    @map("reopened_at") @db.Timestamptz(6)
+  reopenReason   String?      @map("reopen_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  facility       Facility       @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  journalEntries JournalEntry[]
+
+  @@unique([facilityId, startDate, endDate])
+  @@index([organisationId, facilityId, status])
+  @@map("financial_period")
+  @@schema("fin")
+}
+
+enum JournalStatus {
+  POSTED
+  REVERSED
+
+  @@schema("fin")
+}
+
+/// APPEND-ONLY. No UPDATE, no DELETE — enforced by database rules.
+///
+/// `sourceType` + `sourceId` point back to the dispensing, payment, payroll run
+/// or project expense that caused this entry. That is what makes every naira
+/// traceable (doc 22 §1).
+model JournalEntry {
+  id                String        @id @default(uuid()) @db.Uuid
+  organisationId    String        @map("organisation_id") @db.Uuid
+  facilityId        String        @map("facility_id") @db.Uuid
+  financialPeriodId String        @map("financial_period_id") @db.Uuid
+  reference         String
+  entryDate         DateTime      @map("entry_date") @db.Date
+  description       String
+  sourceType        String        @map("source_type")
+  sourceId          String?       @map("source_id") @db.Uuid
+  status            JournalStatus @default(POSTED)
+  /// A correction is a new, linked, contra entry — never an edit (spec §44).
+  reversesId        String?       @map("reverses_id") @db.Uuid
+  reversalReason    String?       @map("reversal_reason")
+  postedBy          String?       @map("posted_by") @db.Uuid
+  postedAt          DateTime      @default(now()) @map("posted_at") @db.Timestamptz(6)
+  approvedBy        String?       @map("approved_by") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  financialPeriod FinancialPeriod @relation(fields: [financialPeriodId], references: [id], onDelete: Restrict)
+  reverses        JournalEntry?   @relation("JournalReversal", fields: [reversesId], references: [id], onDelete: SetNull)
+  reversedBy      JournalEntry[]  @relation("JournalReversal")
+  lines           JournalLine[]
+
+  @@unique([organisationId, reference])
+  @@index([facilityId, entryDate])
+  @@index([sourceType, sourceId])
+  @@map("journal_entry")
+  @@schema("fin")
+}
+
+/// APPEND-ONLY. A deferred constraint trigger asserts at COMMIT that
+/// sum(debit) = sum(credit) for the entry, so an unbalanced entry cannot be
+/// committed by any code path (doc 12 §5).
+model JournalLine {
+  id                 String  @id @default(uuid()) @db.Uuid
+  journalEntryId     String  @map("journal_entry_id") @db.Uuid
+  financialAccountId String  @map("financial_account_id") @db.Uuid
+  organisationId     String  @map("organisation_id") @db.Uuid
+  facilityId         String  @map("facility_id") @db.Uuid
+  debitMinor         BigInt  @default(0) @map("debit_minor")
+  creditMinor        BigInt  @default(0) @map("credit_minor")
+  currency           String  @default("NGN") @db.Char(3)
+  description        String?
+  /// Optional analytical tags: department, service line, project.
+  departmentId       String? @map("department_id") @db.Uuid
+  projectId          String? @map("project_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  journalEntry     JournalEntry     @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
+  financialAccount FinancialAccount @relation(fields: [financialAccountId], references: [id], onDelete: Restrict)
+
+  @@index([journalEntryId])
+  @@index([financialAccountId, createdAt])
+  @@index([facilityId, createdAt])
+  @@map("journal_line")
+  @@schema("fin")
+}
+
+enum ChargeStatus {
+  DRAFT
+  RAISED
+  INVOICED
+  WAIVED
+  CANCELLED
+
+  @@schema("fin")
+}
+
+/// Priced from the tariff version in force on the SERVICE date, and the
+/// tariff version used is stored — so re-pricing a past service is impossible
+/// (doc 12 §3).
+model Charge {
+  id                String             @id @default(uuid()) @db.Uuid
+  organisationId    String             @map("organisation_id") @db.Uuid
+  facilityId        String             @map("facility_id") @db.Uuid
+  encounterId       String?            @map("encounter_id") @db.Uuid
+  serviceOfferingId String?            @map("service_offering_id") @db.Uuid
+  tariffVersionId   String?            @map("tariff_version_id") @db.Uuid
+  description       String
+  quantity          Decimal            @default(1) @db.Decimal(12, 3)
+  unitPriceMinor    BigInt             @map("unit_price_minor")
+  amountMinor       BigInt             @map("amount_minor")
+  currency          String             @default("NGN") @db.Char(3)
+  serviceDate       DateTime           @map("service_date") @db.Date
+  status            ChargeStatus       @default(RAISED)
+  classification    DataClassification @default(ACTUAL)
+  /// Waivers require billing.waive, a reason, and appear on a standing report.
+  waivedBy          String?            @map("waived_by") @db.Uuid
+  waivedAt          DateTime?          @map("waived_at") @db.Timestamptz(6)
+  waiverReason      String?            @map("waiver_reason")
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  encounter       Encounter?       @relation(fields: [encounterId], references: [id], onDelete: SetNull)
+  serviceOffering ServiceOffering? @relation(fields: [serviceOfferingId], references: [id], onDelete: SetNull)
+  tariffVersion   TariffVersion?   @relation(fields: [tariffVersionId], references: [id], onDelete: SetNull)
+  invoiceItem     InvoiceItem?
+  dispensings     Dispensing[]
+  labOrderItems   LabOrderItem[]
+
+  @@index([facilityId, serviceDate])
+  @@index([encounterId])
+  @@map("charge")
+  @@schema("fin")
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+  WRITTEN_OFF
+
+  @@schema("fin")
+}
+
+enum PayerType {
+  SELF_PAY
+  NHIS
+  HMO
+  EMPLOYER
+  GOVERNMENT
+  WAIVER
+
+  @@schema("fin")
+}
+
+model Invoice {
+  id             String        @id @default(uuid()) @db.Uuid
+  organisationId String        @map("organisation_id") @db.Uuid
+  facilityId     String        @map("facility_id") @db.Uuid
+  patientId      String?       @map("patient_id") @db.Uuid
+  reference      String
+  payerType      PayerType     @default(SELF_PAY) @map("payer_type")
+  payerName      String?       @map("payer_name")
+  status         InvoiceStatus @default(DRAFT)
+  issuedAt       DateTime?     @map("issued_at") @db.Timestamptz(6)
+  dueDate        DateTime?     @map("due_date") @db.Date
+  subtotalMinor  BigInt        @default(0) @map("subtotal_minor")
+  discountMinor  BigInt        @default(0) @map("discount_minor")
+  totalMinor     BigInt        @default(0) @map("total_minor")
+  paidMinor      BigInt        @default(0) @map("paid_minor")
+  currency       String        @default("NGN") @db.Char(3)
+  writeOffReason String?       @map("write_off_reason")
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  version    Int        @default(1)
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  patient     Patient?            @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  items       InvoiceItem[]
+  allocations PaymentAllocation[]
+
+  @@unique([organisationId, reference])
+  @@index([facilityId, status, issuedAt])
+  @@index([patientId])
+  @@map("invoice")
+  @@schema("fin")
+}
+
+model InvoiceItem {
+  id             String  @id @default(uuid()) @db.Uuid
+  invoiceId      String  @map("invoice_id") @db.Uuid
+  chargeId       String? @unique @map("charge_id") @db.Uuid
+  organisationId String  @map("organisation_id") @db.Uuid
+  facilityId     String  @map("facility_id") @db.Uuid
+  description    String
+  quantity       Decimal @default(1) @db.Decimal(12, 3)
+  unitPriceMinor BigInt  @map("unit_price_minor")
+  amountMinor    BigInt  @map("amount_minor")
+  currency       String  @default("NGN") @db.Char(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  charge  Charge? @relation(fields: [chargeId], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId])
+  @@map("invoice_item")
+  @@schema("fin")
+}
+
+enum PaymentMethod {
+  CASH
+  POS
+  BANK_TRANSFER
+  NHIS
+  HMO
+  WAIVER
+  OTHER
+
+  @@schema("fin")
+}
+
+enum PaymentDirection {
+  INBOUND
+  OUTBOUND
+
+  @@schema("fin")
+}
+
+/// APPEND-ONLY. A refund is a separate, linked record — never an edit.
+model Payment {
+  id                   String           @id @default(uuid()) @db.Uuid
+  organisationId       String           @map("organisation_id") @db.Uuid
+  facilityId           String           @map("facility_id") @db.Uuid
+  reference            String
+  direction            PaymentDirection @default(INBOUND)
+  amountMinor          BigInt           @map("amount_minor")
+  currency             String           @default("NGN") @db.Char(3)
+  method               PaymentMethod
+  externalReference    String?          @map("external_reference")
+  supplierInvoiceId    String?          @map("supplier_invoice_id") @db.Uuid
+  receivedBy           String?          @map("received_by") @db.Uuid
+  receivedAt           DateTime         @default(now()) @map("received_at") @db.Timestamptz(6)
+  /// Segregation of duties: the raiser of an outbound payment may not approve
+  /// it (doc 18 §9).
+  approvedBy           String?          @map("approved_by") @db.Uuid
+  approvedAt           DateTime?        @map("approved_at") @db.Timestamptz(6)
+  /// Offline cash receipts draw from a pre-allocated number range issued at
+  /// sync, so receipt numbers never collide and gaps are detectable
+  /// (doc 09 §4).
+  offlineReceiptNumber String?          @map("offline_receipt_number")
+  notes                String?
+
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy       String?    @map("created_by") @db.Uuid
+  deviceId        String?    @map("device_id")
+  deviceCreatedAt DateTime?  @map("device_created_at") @db.Timestamptz(6)
+  syncStatus      SyncStatus @default(SYNCED) @map("sync_status")
+
+  supplierInvoice SupplierInvoice?       @relation(fields: [supplierInvoiceId], references: [id], onDelete: SetNull)
+  allocations     PaymentAllocation[]
+  refunds         Refund[]
+  recoveryEvents  CapitalRecoveryEvent[]
+  projectExpenses ProjectExpense[]
+
+  @@unique([organisationId, reference])
+  @@index([facilityId, receivedAt, method])
+  @@map("payment")
+  @@schema("fin")
+}
+
+/// A payment may settle several invoices, partially. Allocation is explicit
+/// so the receivables position is never guessed.
+model PaymentAllocation {
+  id             String   @id @default(uuid()) @db.Uuid
+  paymentId      String   @map("payment_id") @db.Uuid
+  invoiceId      String   @map("invoice_id") @db.Uuid
+  organisationId String   @map("organisation_id") @db.Uuid
+  amountMinor    BigInt   @map("amount_minor")
+  currency       String   @default("NGN") @db.Char(3)
+  allocatedAt    DateTime @default(now()) @map("allocated_at") @db.Timestamptz(6)
+  allocatedBy    String?  @map("allocated_by") @db.Uuid
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+
+  @@unique([paymentId, invoiceId])
+  @@index([invoiceId])
+  @@map("payment_allocation")
+  @@schema("fin")
+}
+
+model Refund {
+  id             String    @id @default(uuid()) @db.Uuid
+  paymentId      String    @map("payment_id") @db.Uuid
+  organisationId String    @map("organisation_id") @db.Uuid
+  facilityId     String    @map("facility_id") @db.Uuid
+  reference      String
+  amountMinor    BigInt    @map("amount_minor")
+  currency       String    @default("NGN") @db.Char(3)
+  reason         String
+  approvedBy     String?   @map("approved_by") @db.Uuid
+  approvedAt     DateTime? @map("approved_at") @db.Timestamptz(6)
+  refundedAt     DateTime  @default(now()) @map("refunded_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@unique([organisationId, reference])
+  @@index([facilityId, refundedAt])
+  @@map("refund")
+  @@schema("fin")
+}
+
+enum BudgetStatus {
+  DRAFT
+  APPROVED
+  REVISED
+  CLOSED
+
+  @@schema("fin")
+}
+
+model Budget {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  facilityId     String       @map("facility_id") @db.Uuid
+  name           String
+  fiscalYear     Int          @map("fiscal_year")
+  status         BudgetStatus @default(DRAFT)
+  approvedBy     String?      @map("approved_by") @db.Uuid
+  approvedAt     DateTime?    @map("approved_at") @db.Timestamptz(6)
+  revisionOfId   String?      @map("revision_of_id") @db.Uuid
+  revisionReason String?      @map("revision_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  revisionOf Budget?      @relation("BudgetRevision", fields: [revisionOfId], references: [id], onDelete: SetNull)
+  revisions  Budget[]     @relation("BudgetRevision")
+  lines      BudgetLine[]
+
+  @@unique([facilityId, name, fiscalYear])
+  @@index([organisationId, facilityId, fiscalYear])
+  @@map("budget")
+  @@schema("fin")
+}
+
+model BudgetLine {
+  id                 String    @id @default(uuid()) @db.Uuid
+  budgetId           String    @map("budget_id") @db.Uuid
+  financialAccountId String?   @map("financial_account_id") @db.Uuid
+  capexLineId        String?   @map("capex_line_id") @db.Uuid
+  organisationId     String    @map("organisation_id") @db.Uuid
+  facilityId         String    @map("facility_id") @db.Uuid
+  description        String
+  budgetedMinor      BigInt    @map("budgeted_minor")
+  approvedMinor      BigInt    @default(0) @map("approved_minor")
+  currency           String    @default("NGN") @db.Char(3)
+  periodStart        DateTime? @map("period_start") @db.Date
+  periodEnd          DateTime? @map("period_end") @db.Date
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  budget           Budget            @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  financialAccount FinancialAccount? @relation(fields: [financialAccountId], references: [id], onDelete: SetNull)
+  capexLine        CapexLine?        @relation(fields: [capexLineId], references: [id], onDelete: SetNull)
+  projectBudgets   ProjectBudget[]
+
+  @@index([budgetId])
+  @@map("budget_line")
+  @@schema("fin")
+}
+
+model BankAccount {
+  id                     String       @id @default(uuid()) @db.Uuid
+  organisationId         String       @map("organisation_id") @db.Uuid
+  facilityId             String       @map("facility_id") @db.Uuid
+  bankName               String       @map("bank_name")
+  accountName            String       @map("account_name")
+  accountNumberEncrypted String       @map("account_number_encrypted")
+  accountNumberLast4     String       @map("account_number_last4") @db.Char(4)
+  financialAccountId     String?      @map("financial_account_id") @db.Uuid
+  status                 RecordStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  statementLines  BankStatementLine[]
+  reconciliations BankReconciliation[]
+
+  @@index([organisationId, facilityId])
+  @@map("bank_account")
+  @@schema("fin")
+}
+
+model BankStatementLine {
+  id                    String    @id @default(uuid()) @db.Uuid
+  bankAccountId         String    @map("bank_account_id") @db.Uuid
+  reconciliationId      String?   @map("reconciliation_id") @db.Uuid
+  organisationId        String    @map("organisation_id") @db.Uuid
+  facilityId            String    @map("facility_id") @db.Uuid
+  valueDate             DateTime  @map("value_date") @db.Date
+  description           String
+  debitMinor            BigInt    @default(0) @map("debit_minor")
+  creditMinor           BigInt    @default(0) @map("credit_minor")
+  balanceMinor          BigInt?   @map("balance_minor")
+  currency              String    @default("NGN") @db.Char(3)
+  externalReference     String?   @map("external_reference")
+  matchedJournalEntryId String?   @map("matched_journal_entry_id") @db.Uuid
+  matchedAt             DateTime? @map("matched_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  bankAccount    BankAccount         @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  reconciliation BankReconciliation? @relation(fields: [reconciliationId], references: [id], onDelete: SetNull)
+
+  @@index([bankAccountId, valueDate])
+  @@index([facilityId, matchedAt])
+  @@map("bank_statement_line")
+  @@schema("fin")
+}
+
+model BankReconciliation {
+  id                    String    @id @default(uuid()) @db.Uuid
+  bankAccountId         String    @map("bank_account_id") @db.Uuid
+  organisationId        String    @map("organisation_id") @db.Uuid
+  facilityId            String    @map("facility_id") @db.Uuid
+  periodStart           DateTime  @map("period_start") @db.Date
+  periodEnd             DateTime  @map("period_end") @db.Date
+  statementClosingMinor BigInt    @map("statement_closing_minor")
+  ledgerClosingMinor    BigInt    @map("ledger_closing_minor")
+  varianceMinor         BigInt    @map("variance_minor")
+  unmatchedCount        Int       @default(0) @map("unmatched_count")
+  notes                 String?
+  completedBy           String?   @map("completed_by") @db.Uuid
+  completedAt           DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  bankAccount    BankAccount         @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+  statementLines BankStatementLine[]
+
+  @@index([facilityId, periodEnd])
+  @@map("bank_reconciliation")
+  @@schema("fin")
+}
+
+/// Daily cash identity (spec §33):
+///   opening + receipts − approved expenses = expected closing
+///
+/// Opening is the previous day's SEALED closing, never a typed figure. Any
+/// non-zero variance needs a reason and escalates (doc 12 §6).
+model DailyCashReconciliation {
+  id                   String    @id @default(uuid()) @db.Uuid
+  organisationId       String    @map("organisation_id") @db.Uuid
+  facilityId           String    @map("facility_id") @db.Uuid
+  businessDate         DateTime  @map("business_date") @db.Date
+  cashPoint            String?   @map("cash_point")
+  openingBalanceMinor  BigInt    @map("opening_balance_minor")
+  receiptsMinor        BigInt    @map("receipts_minor")
+  expensesMinor        BigInt    @map("expenses_minor")
+  expectedClosingMinor BigInt    @map("expected_closing_minor")
+  countedClosingMinor  BigInt    @map("counted_closing_minor")
+  varianceMinor        BigInt    @map("variance_minor")
+  varianceReason       String?   @map("variance_reason")
+  countedBy            String?   @map("counted_by") @db.Uuid
+  countersignedBy      String?   @map("countersigned_by") @db.Uuid
+  /// Immutable once sealed.
+  sealedAt             DateTime? @map("sealed_at") @db.Timestamptz(6)
+  escalatedAt          DateTime? @map("escalated_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  @@unique([facilityId, businessDate, cashPoint])
+  @@index([organisationId, facilityId, businessDate])
+  @@map("daily_cash_reconciliation")
+  @@schema("fin")
+}

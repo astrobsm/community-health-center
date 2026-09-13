@@ -1,0 +1,753 @@
+// =============================================================================
+// CORE — tenancy, identity, access control, service catalogue, configuration
+// =============================================================================
+//
+// TWO SCHEMA-WIDE DECISIONS, recorded here because they shape every model:
+//
+// 1. TENANCY COLUMNS ARE DENORMALISED.
+//    `organisationId` and `facilityId` appear on child tables as plain indexed
+//    columns, with a Prisma relation declared only on the root entity of each
+//    aggregate (Facility -> Encounter -> ClinicalNote: the first two hops are
+//    relations, the tenancy column on ClinicalNote is scalar).
+//    Reason: PostgreSQL row-level security policies read these columns
+//    directly, so they must exist on every table; declaring 140 back-relations
+//    on Facility would add nothing but noise. Integrity is enforced by the RLS
+//    policy and by the service layer, both tested.
+//
+// 2. `createdBy` / `updatedBy` ARE SCALAR, NOT RELATIONS.
+//    They are attribution fields present on ~140 tables. Declaring them as
+//    relations would put 280 back-relation arrays on AppUser.
+//    This is safe because users are NEVER deleted — only disabled (doc 07 §6) —
+//    so a dangling reference cannot arise.
+//
+// =============================================================================
+
+/// A tenant. Everything in the system belongs to exactly one organisation.
+model Organisation {
+  id              String       @id @default(uuid()) @db.Uuid
+  name            String
+  code            String       @unique
+  country         String       @default("NG")
+  contactEmail    String?      @map("contact_email")
+  contactPhone    String?      @map("contact_phone")
+  addressLine     String?      @map("address_line")
+  displayTimezone String       @default("Africa/Lagos") @map("display_timezone")
+  currency        String       @default("NGN") @db.Char(3)
+  status          RecordStatus @default(ACTIVE)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  version   Int       @default(1)
+
+  facilities     Facility[]
+  users          AppUser[]
+  roles          Role[]
+  configurations SystemConfiguration[]
+  communities    Community[]
+  suppliers      Supplier[]
+
+  @@map("organisation")
+  @@schema("core")
+}
+
+/// Configurable facility classification (PHC, Comprehensive Health Centre,
+/// General Hospital...). A table, not an enum — spec §89.
+model FacilityType {
+  id              String  @id @default(uuid()) @db.Uuid
+  code            String  @unique
+  name            String
+  description     String?
+  /// Seeded reference data; an organisation admin may extend but not redefine.
+  isSystemManaged Boolean @default(false) @map("is_system_managed")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  facilities Facility[]
+
+  @@map("facility_type")
+  @@schema("core")
+}
+
+/// The unit around which the entire product is organised.
+model Facility {
+  id             String                 @id @default(uuid()) @db.Uuid
+  organisationId String                 @map("organisation_id") @db.Uuid
+  facilityTypeId String?                @map("facility_type_id") @db.Uuid
+  name           String
+  code           String
+  /// Drives module visibility and gates workflow transitions (doc 00 §4).
+  lifecycleStage FacilityLifecycleStage @default(PRE_ASSESSMENT) @map("lifecycle_stage")
+  /// Day 0 — set when the first baseline is sealed. Never edited afterwards.
+  baselineDate   DateTime?              @map("baseline_date") @db.Date
+  goLiveDate     DateTime?              @map("go_live_date") @db.Date
+  status         RecordStatus           @default(ACTIVE)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  version   Int       @default(1)
+
+  organisation Organisation  @relation(fields: [organisationId], references: [id], onDelete: Restrict)
+  facilityType FacilityType? @relation(fields: [facilityTypeId], references: [id], onDelete: SetNull)
+
+  location          FacilityLocation?
+  ownerships        FacilityOwnership[]
+  stageTransitions  FacilityStageTransition[]
+  departments       Department[]
+  serviceOfferings  ServiceOffering[]
+  userAccess        UserFacilityAccess[]
+  communities       Community[]
+  assessments       FacilityAssessment[]
+  baselineSnapshots BaselineSnapshot[]
+  rooms             Room[]
+  utilities         Utility[]
+  equipmentAssets   EquipmentAsset[]
+  capitalProjects   CapitalProject[]
+  capexPlans        CapexPlan[]
+  financialModels   FinancialModel[]
+  partnerships      Partnership[]
+  proposals         Proposal[]
+  patients          Patient[]
+  encounters        Encounter[]
+  inventoryItems    InventoryItem[]
+  stockLocations    StockLocation[]
+  financialPeriods  FinancialPeriod[]
+  staff             Staff[]
+  kpiAssignments    KpiAssignment[]
+
+  @@unique([organisationId, code])
+  @@index([organisationId])
+  @@index([organisationId, lifecycleStage])
+  @@map("facility")
+  @@schema("core")
+}
+
+/// Where the facility physically is. Supports the
+/// Organisation -> State -> LGA -> Facility hierarchy (spec §68).
+model FacilityLocation {
+  id             String             @id @default(uuid()) @db.Uuid
+  facilityId     String             @unique @map("facility_id") @db.Uuid
+  organisationId String             @map("organisation_id") @db.Uuid
+  country        String             @default("NG")
+  state          String
+  lga            String
+  ward           String?
+  town           String?
+  addressLine    String?            @map("address_line")
+  latitude       Decimal?           @db.Decimal(10, 7)
+  longitude      Decimal?           @db.Decimal(10, 7)
+  /// How the coordinates were obtained — a GPS fix and a map guess are not
+  /// the same fact.
+  classification DataClassification @default(REPORTED)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  facility Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId, state, lga])
+  @@map("facility_location")
+  @@schema("core")
+}
+
+enum OwnerType {
+  FEDERAL_GOVERNMENT
+  STATE_GOVERNMENT
+  LOCAL_GOVERNMENT
+  COMMUNITY
+  PRIVATE
+  FAITH_BASED
+  NGO
+  OTHER
+
+  @@schema("core")
+}
+
+/// Ownership and custodianship, with the evidence that establishes it.
+/// Due diligence depends on this being documented rather than assumed.
+model FacilityOwnership {
+  id             String             @id @default(uuid()) @db.Uuid
+  facilityId     String             @map("facility_id") @db.Uuid
+  organisationId String             @map("organisation_id") @db.Uuid
+  ownerType      OwnerType          @map("owner_type")
+  ownerName      String             @map("owner_name")
+  custodianName  String?            @map("custodian_name")
+  effectiveFrom  DateTime?          @map("effective_from") @db.Date
+  effectiveTo    DateTime?          @map("effective_to") @db.Date
+  titleReference String?            @map("title_reference")
+  notes          String?
+  classification DataClassification @default(REPORTED)
+  verifiedBy     String?            @map("verified_by") @db.Uuid
+  verifiedAt     DateTime?          @map("verified_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  facility Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId])
+  @@map("facility_ownership")
+  @@schema("core")
+}
+
+/// Append-only record of lifecycle movement. Going "backwards" is a new row
+/// with a reason, never a deletion.
+model FacilityStageTransition {
+  id             String                  @id @default(uuid()) @db.Uuid
+  facilityId     String                  @map("facility_id") @db.Uuid
+  organisationId String                  @map("organisation_id") @db.Uuid
+  fromStage      FacilityLifecycleStage? @map("from_stage")
+  toStage        FacilityLifecycleStage  @map("to_stage")
+  reason         String?
+  occurredAt     DateTime                @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  performedBy    String?                 @map("performed_by") @db.Uuid
+
+  facility Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId, occurredAt])
+  @@map("facility_stage_transition")
+  @@schema("core")
+}
+
+model Department {
+  id             String       @id @default(uuid()) @db.Uuid
+  facilityId     String       @map("facility_id") @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  code           String
+  name           String
+  description    String?
+  status         RecordStatus @default(ACTIVE)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  version   Int       @default(1)
+
+  facility         Facility             @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  serviceOfferings ServiceOffering[]
+  userAccess       UserFacilityAccess[]
+  staffPostings    StaffPosting[]
+  rooms            Room[]
+
+  @@unique([facilityId, code])
+  @@index([organisationId, facilityId])
+  @@map("department")
+  @@schema("core")
+}
+
+enum ServiceCategory {
+  CONSULTATION
+  LABORATORY
+  PHARMACY
+  PROCEDURE
+  MATERNITY
+  IMMUNISATION
+  PREVENTIVE
+  ADMISSION
+  IMAGING
+  OTHER
+
+  @@schema("core")
+}
+
+/// The catalogue of services that *can* exist. Configurable — spec §89.
+model Service {
+  id              String          @id @default(uuid()) @db.Uuid
+  code            String          @unique
+  name            String
+  category        ServiceCategory
+  description     String?
+  isSystemManaged Boolean         @default(false) @map("is_system_managed")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  offerings ServiceOffering[]
+
+  @@map("service")
+  @@schema("core")
+}
+
+/// A service as actually offered by one facility. Availability is a fact about
+/// a place, not about the catalogue — which is what makes
+/// "services restored" measurable (spec §66).
+model ServiceOffering {
+  id                String    @id @default(uuid()) @db.Uuid
+  facilityId        String    @map("facility_id") @db.Uuid
+  organisationId    String    @map("organisation_id") @db.Uuid
+  serviceId         String    @map("service_id") @db.Uuid
+  departmentId      String?   @map("department_id") @db.Uuid
+  /// False until the prerequisites exist: commissioned equipment, trained
+  /// staff, consumables. Set by the commissioning workflow, not by hand.
+  isAvailable       Boolean   @default(false) @map("is_available")
+  availableFrom     DateTime? @map("available_from") @db.Date
+  unavailableReason String?   @map("unavailable_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  facility   Facility        @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  service    Service         @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  department Department?     @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  tariffs    TariffVersion[]
+  charges    Charge[]
+
+  @@unique([facilityId, serviceId])
+  @@index([organisationId, facilityId])
+  @@map("service_offering")
+  @@schema("core")
+}
+
+/// Prices are VERSIONED, never edited.
+///
+/// A charge raised in March must forever price at March's tariff, so a report
+/// run today for last March reproduces last March's figures exactly.
+/// (doc 12 §3)
+model TariffVersion {
+  id                String    @id @default(uuid()) @db.Uuid
+  serviceOfferingId String    @map("service_offering_id") @db.Uuid
+  organisationId    String    @map("organisation_id") @db.Uuid
+  facilityId        String    @map("facility_id") @db.Uuid
+  /// Minor units (kobo). ADR 0003.
+  priceMinor        BigInt    @map("price_minor")
+  currency          String    @default("NGN") @db.Char(3)
+  effectiveFrom     DateTime  @map("effective_from") @db.Date
+  effectiveTo       DateTime? @map("effective_to") @db.Date
+  approvedBy        String?   @map("approved_by") @db.Uuid
+  approvedAt        DateTime? @map("approved_at") @db.Timestamptz(6)
+  notes             String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  serviceOffering ServiceOffering @relation(fields: [serviceOfferingId], references: [id], onDelete: Cascade)
+  charges         Charge[]
+
+  @@index([serviceOfferingId, effectiveFrom])
+  @@index([facilityId, effectiveFrom])
+  @@map("tariff_version")
+  @@schema("core")
+}
+
+// -----------------------------------------------------------------------------
+// Identity and access control — docs 07 and 08
+// -----------------------------------------------------------------------------
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  LOCKED
+  DISABLED
+
+  @@schema("core")
+}
+
+/// The authentication principal.
+///
+/// Distinct from `Staff`: a government observer has a user account and no staff
+/// record; a cleaner may be rostered with no user account. The optional link is
+/// `Staff.userId`.
+model AppUser {
+  id                   String     @id @default(uuid()) @db.Uuid
+  organisationId       String     @map("organisation_id") @db.Uuid
+  email                String     @db.Citext
+  fullName             String     @map("full_name")
+  phone                String?
+  passwordHash         String     @map("password_hash")
+  passwordChangedAt    DateTime?  @map("password_changed_at") @db.Timestamptz(6)
+  status               UserStatus @default(INVITED)
+  mfaEnabled           Boolean    @default(false) @map("mfa_enabled")
+  /// Incremented on any role or access change. Invalidates the cached
+  /// permission set instantly, so revocation takes effect on the next request
+  /// rather than at token expiry (doc 08 §7).
+  permissionVersion    Int        @default(1) @map("permission_version")
+  failedLoginCount     Int        @default(0) @map("failed_login_count")
+  lockedUntil          DateTime?  @map("locked_until") @db.Timestamptz(6)
+  lastLoginAt          DateTime?  @map("last_login_at") @db.Timestamptz(6)
+  /// Which version of the privacy notice this user accepted.
+  privacyNoticeVersion String?    @map("privacy_notice_version")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  /// Users are disabled, never deleted — audit history must stay attributable.
+  version   Int      @default(1)
+
+  organisation   Organisation         @relation(fields: [organisationId], references: [id], onDelete: Restrict)
+  userRoles      UserRole[]
+  facilityAccess UserFacilityAccess[]
+  sessions       UserSession[]
+  mfaFactors     UserMfaFactor[]
+  staffRecord    Staff?
+  notifications  Notification[]
+
+  @@unique([organisationId, email])
+  @@index([organisationId, status])
+  @@map("app_user")
+  @@schema("core")
+}
+
+model Role {
+  id              String  @id @default(uuid()) @db.Uuid
+  organisationId  String  @map("organisation_id") @db.Uuid
+  code            String
+  name            String
+  description     String?
+  /// Seeded role templates (spec §58). An organisation may clone and adjust
+  /// them but not silently redefine the originals.
+  isSystemManaged Boolean @default(false) @map("is_system_managed")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  organisation Organisation     @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  userRoles    UserRole[]
+  permissions  RolePermission[]
+
+  @@unique([organisationId, code])
+  @@map("role")
+  @@schema("core")
+}
+
+/// `module.action` permission codes. The catalogue lives in
+/// packages/contracts/src/permissions.ts; this table exists so roles can
+/// reference permissions by key.
+model Permission {
+  id          String @id @default(uuid()) @db.Uuid
+  code        String @unique
+  module      String
+  action      String
+  description String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  roles RolePermission[]
+
+  @@index([module])
+  @@map("permission")
+  @@schema("core")
+}
+
+model UserRole {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  roleId    String    @map("role_id") @db.Uuid
+  grantedBy String?   @map("granted_by") @db.Uuid
+  grantedAt DateTime  @default(now()) @map("granted_at") @db.Timestamptz(6)
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(6)
+
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@map("user_role")
+  @@schema("core")
+}
+
+model RolePermission {
+  id           String  @id @default(uuid()) @db.Uuid
+  roleId       String  @map("role_id") @db.Uuid
+  permissionId String  @map("permission_id") @db.Uuid
+  /// An explicit denial always beats a grant (doc 08 §7).
+  isDenial     Boolean @default(false) @map("is_denial")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permission")
+  @@schema("core")
+}
+
+enum ScopeLevel {
+  FULL
+  DEPARTMENT
+  AGGREGATE_ONLY
+  SELF_ONLY
+
+  @@schema("core")
+}
+
+/// Which facilities a user may reach, and how deeply.
+/// AGGREGATE_ONLY is how a government observer sees performance without
+/// reaching a single identified patient record (spec §41).
+model UserFacilityAccess {
+  id             String     @id @default(uuid()) @db.Uuid
+  userId         String     @map("user_id") @db.Uuid
+  facilityId     String     @map("facility_id") @db.Uuid
+  organisationId String     @map("organisation_id") @db.Uuid
+  scopeLevel     ScopeLevel @default(FULL) @map("scope_level")
+  departmentId   String?    @map("department_id") @db.Uuid
+  grantedBy      String?    @map("granted_by") @db.Uuid
+  grantedAt      DateTime   @default(now()) @map("granted_at") @db.Timestamptz(6)
+  expiresAt      DateTime?  @map("expires_at") @db.Timestamptz(6)
+
+  user       AppUser     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  facility   Facility    @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, facilityId])
+  @@index([facilityId])
+  @@map("user_facility_access")
+  @@schema("core")
+}
+
+model UserSession {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  deviceId      String?   @map("device_id")
+  deviceLabel   String?   @map("device_label")
+  ipAddress     String?   @map("ip_address") @db.Inet
+  userAgent     String?   @map("user_agent")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt    DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedReason String?   @map("revoked_reason")
+
+  user          AppUser        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokens RefreshToken[]
+
+  @@index([userId, revokedAt])
+  @@map("user_session")
+  @@schema("core")
+}
+
+enum RefreshTokenStatus {
+  ACTIVE
+  ROTATED
+  REVOKED
+
+  @@schema("core")
+}
+
+/// Rotating refresh tokens with reuse detection.
+///
+/// Only the SHA-256 hash is stored. Presenting an already-ROTATED token means
+/// it was stolen: the whole family is revoked and the event is audited
+/// (doc 07 §2).
+model RefreshToken {
+  id        String             @id @default(uuid()) @db.Uuid
+  sessionId String             @map("session_id") @db.Uuid
+  tokenHash String             @unique @map("token_hash")
+  /// Lineage root, so reuse detection can revoke every descendant at once.
+  familyId  String             @map("family_id") @db.Uuid
+  status    RefreshTokenStatus @default(ACTIVE)
+  deviceId  String?            @map("device_id")
+  issuedAt  DateTime           @default(now()) @map("issued_at") @db.Timestamptz(6)
+  expiresAt DateTime           @map("expires_at") @db.Timestamptz(6)
+  rotatedAt DateTime?          @map("rotated_at") @db.Timestamptz(6)
+  revokedAt DateTime?          @map("revoked_at") @db.Timestamptz(6)
+
+  session UserSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
+  @@index([sessionId, status])
+  @@map("refresh_token")
+  @@schema("core")
+}
+
+enum MfaFactorType {
+  TOTP
+  RECOVERY_CODE
+
+  @@schema("core")
+}
+
+model UserMfaFactor {
+  id              String        @id @default(uuid()) @db.Uuid
+  userId          String        @map("user_id") @db.Uuid
+  factorType      MfaFactorType @map("factor_type")
+  /// TOTP secret or recovery-code hash, encrypted at field level.
+  secretEncrypted String        @map("secret_encrypted")
+  label           String?
+  confirmedAt     DateTime?     @map("confirmed_at") @db.Timestamptz(6)
+  usedAt          DateTime?     @map("used_at") @db.Timestamptz(6)
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, factorType])
+  @@map("user_mfa_factor")
+  @@schema("core")
+}
+
+/// Everything the specification says must be configurable rather than
+/// hard-coded: scoring weights, thresholds, tolerances, approval limits,
+/// retention periods, alert horizons (spec §89).
+model SystemConfiguration {
+  id             String  @id @default(uuid()) @db.Uuid
+  organisationId String  @map("organisation_id") @db.Uuid
+  facilityId     String? @map("facility_id") @db.Uuid
+  key            String
+  value          Json
+  description    String?
+  /// Explains *why* this value is what it is — a threshold without a rationale
+  /// becomes folklore.
+  rationale      String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, facilityId, key])
+  @@index([organisationId, key])
+  @@map("system_configuration")
+  @@schema("core")
+}
+
+/// Replay protection for offline-originated writes.
+///
+/// Retained 30 days because a field device may retry a week later (doc 06 §6).
+model IdempotencyRecord {
+  id             String   @id @default(uuid()) @db.Uuid
+  key            String   @unique
+  organisationId String   @map("organisation_id") @db.Uuid
+  userId         String?  @map("user_id") @db.Uuid
+  endpoint       String
+  requestHash    String   @map("request_hash")
+  responseStatus Int      @map("response_status")
+  responseBody   Json?    @map("response_body")
+  entityId       String?  @map("entity_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz(6)
+
+  @@index([expiresAt])
+  @@map("idempotency_record")
+  @@schema("core")
+}
+
+// -----------------------------------------------------------------------------
+// Community module — spec §26
+// -----------------------------------------------------------------------------
+
+model Community {
+  id                String   @id @default(uuid()) @db.Uuid
+  organisationId    String   @map("organisation_id") @db.Uuid
+  facilityId        String   @map("facility_id") @db.Uuid
+  name              String
+  ward              String?
+  /// Distance and travel time are what actually determine whether people come.
+  distanceKm        Decimal? @map("distance_km") @db.Decimal(6, 2)
+  travelTimeMinutes Int?     @map("travel_time_minutes")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  organisation Organisation      @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  facility     Facility          @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  profile      CommunityProfile?
+  surveys      CommunitySurvey[]
+  patients     Patient[]
+
+  @@unique([facilityId, name])
+  @@index([organisationId, facilityId])
+  @@map("community")
+  @@schema("core")
+}
+
+model CommunityProfile {
+  id                     String             @id @default(uuid()) @db.Uuid
+  communityId            String             @unique @map("community_id") @db.Uuid
+  organisationId         String             @map("organisation_id") @db.Uuid
+  catchmentPopulation    Int?               @map("catchment_population")
+  householdCount         Int?               @map("household_count")
+  under5Population       Int?               @map("under5_population")
+  womenOfChildbearingAge Int?               @map("women_of_childbearing_age")
+  primaryOccupation      String?            @map("primary_occupation")
+  transportModes         String?            @map("transport_modes")
+  roadAccess             String?            @map("road_access")
+  competingFacilities    String?            @map("competing_facilities")
+  statedHealthNeeds      String?            @map("stated_health_needs")
+  affordabilityNotes     String?            @map("affordability_notes")
+  communityExpectations  String?            @map("community_expectations")
+  /// Population figures from a census are REPORTED, not ACTUAL. Labelling this
+  /// honestly is the point of the classification column.
+  classification         DataClassification @default(REPORTED)
+  sourceReference        String?            @map("source_reference")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@map("community_profile")
+  @@schema("core")
+}
+
+model CommunitySurvey {
+  id              String    @id @default(uuid()) @db.Uuid
+  communityId     String    @map("community_id") @db.Uuid
+  organisationId  String    @map("organisation_id") @db.Uuid
+  facilityId      String    @map("facility_id") @db.Uuid
+  title           String
+  conductedOn     DateTime? @map("conducted_on") @db.Date
+  respondentCount Int       @default(0) @map("respondent_count")
+  methodology     String?
+  summary         String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  community Community                 @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  responses CommunitySurveyResponse[]
+
+  @@index([facilityId, conductedOn])
+  @@map("community_survey")
+  @@schema("core")
+}
+
+model CommunitySurveyResponse {
+  id             String  @id @default(uuid()) @db.Uuid
+  surveyId       String  @map("survey_id") @db.Uuid
+  organisationId String  @map("organisation_id") @db.Uuid
+  questionCode   String  @map("question_code")
+  answer         Json
+  /// Anonymous by default — community surveys collect opinion, not identity.
+  respondentRef  String? @map("respondent_ref")
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  survey CommunitySurvey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+
+  @@index([surveyId, questionCode])
+  @@map("community_survey_response")
+  @@schema("core")
+}

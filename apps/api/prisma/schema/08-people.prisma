@@ -1,0 +1,462 @@
+// =============================================================================
+// PEOPLE — staff, credentials, postings, attendance, performance, incentives
+//
+// The comparison this schema exists to support (spec §23):
+//   REQUIRED -> APPROVED -> POSTED -> PRESENT
+// Establishment gaps and attendance gaps are different problems with different
+// remedies, so the data keeps them apart.
+// =============================================================================
+
+enum StaffStatus {
+  ACTIVE
+  ON_LEAVE
+  SUSPENDED
+  EXITED
+
+  @@schema("people")
+}
+
+enum EmployerType {
+  GOVERNMENT
+  PARTNER
+  LOCUM
+  VOLUNTEER
+  CONTRACTOR
+
+  @@schema("people")
+}
+
+model Staff {
+  id                String       @id @default(uuid()) @db.Uuid
+  organisationId    String       @map("organisation_id") @db.Uuid
+  facilityId        String       @map("facility_id") @db.Uuid
+  /// Optional: a cleaner may be rostered without ever logging in.
+  userId            String?      @unique @map("user_id") @db.Uuid
+  staffNumber       String       @map("staff_number")
+  givenName         String       @map("given_name")
+  familyName        String       @map("family_name")
+  otherNames        String?      @map("other_names")
+  sex               Sex          @default(UNKNOWN)
+  dateOfBirth       DateTime?    @map("date_of_birth") @db.Date
+  phone             String?
+  email             String?
+  cadre             String
+  qualification     String?
+  employerType      EmployerType @default(GOVERNMENT) @map("employer_type")
+  employmentDate    DateTime?    @map("employment_date") @db.Date
+  exitDate          DateTime?    @map("exit_date") @db.Date
+  status            StaffStatus  @default(ACTIVE)
+  /// PIN hash for attendance clock-in on a shared device (spec §24).
+  attendancePinHash String?      @map("attendance_pin_hash")
+  qrTokenHash       String?      @map("qr_token_hash")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  version   Int       @default(1)
+
+  facility      Facility                  @relation(fields: [facilityId], references: [id], onDelete: Restrict)
+  user          AppUser?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  credentials   StaffCredential[]
+  postings      StaffPosting[]
+  schedules     StaffSchedule[]
+  attendance    Attendance[]
+  leave         Leave[]
+  metricResults PerformanceMetricResult[]
+  reviews       PerformanceReview[]
+  incentives    StaffIncentive[]
+
+  @@unique([facilityId, staffNumber])
+  @@index([organisationId, facilityId, status])
+  @@index([facilityId, cadre])
+  @@map("staff")
+  @@schema("people")
+}
+
+enum CredentialStatus {
+  VALID
+  EXPIRING
+  EXPIRED
+  SUSPENDED
+  UNVERIFIED
+
+  @@schema("people")
+}
+
+/// Expiry drives a notification. An expired professional licence is a
+/// regulatory and clinical risk, not an administrative detail.
+model StaffCredential {
+  id                 String           @id @default(uuid()) @db.Uuid
+  staffId            String           @map("staff_id") @db.Uuid
+  organisationId     String           @map("organisation_id") @db.Uuid
+  facilityId         String           @map("facility_id") @db.Uuid
+  credentialType     String           @map("credential_type")
+  credentialNumber   String?          @map("credential_number")
+  issuingBody        String?          @map("issuing_body")
+  issuedOn           DateTime?        @map("issued_on") @db.Date
+  expiresOn          DateTime?        @map("expires_on") @db.Date
+  status             CredentialStatus @default(UNVERIFIED)
+  verifiedBy         String?          @map("verified_by") @db.Uuid
+  verifiedAt         DateTime?        @map("verified_at") @db.Timestamptz(6)
+  evidenceStorageKey String?          @map("evidence_storage_key")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId])
+  @@index([facilityId, expiresOn, status])
+  @@map("staff_credential")
+  @@schema("people")
+}
+
+/// An exclusion constraint in the migration prevents overlapping postings for
+/// the same staff member (doc 03 §5).
+model StaffPosting {
+  id               String       @id @default(uuid()) @db.Uuid
+  staffId          String       @map("staff_id") @db.Uuid
+  departmentId     String?      @map("department_id") @db.Uuid
+  organisationId   String       @map("organisation_id") @db.Uuid
+  facilityId       String       @map("facility_id") @db.Uuid
+  roleTitle        String       @map("role_title")
+  cadre            String?
+  employerType     EmployerType @default(GOVERNMENT) @map("employer_type")
+  startDate        DateTime     @map("start_date") @db.Date
+  endDate          DateTime?    @map("end_date") @db.Date
+  isPrimary        Boolean      @default(true) @map("is_primary")
+  postingReference String?      @map("posting_reference")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  staff      Staff       @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  @@index([staffId, startDate])
+  @@index([facilityId, departmentId])
+  @@map("staff_posting")
+  @@schema("people")
+}
+
+model StaffSchedule {
+  id             String    @id @default(uuid()) @db.Uuid
+  staffId        String    @map("staff_id") @db.Uuid
+  organisationId String    @map("organisation_id") @db.Uuid
+  facilityId     String    @map("facility_id") @db.Uuid
+  periodStart    DateTime  @map("period_start") @db.Date
+  periodEnd      DateTime  @map("period_end") @db.Date
+  publishedAt    DateTime? @map("published_at") @db.Timestamptz(6)
+  publishedBy    String?   @map("published_by") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  staff  Staff   @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  shifts Shift[]
+
+  @@index([facilityId, periodStart])
+  @@map("staff_schedule")
+  @@schema("people")
+}
+
+enum ShiftType {
+  MORNING
+  AFTERNOON
+  NIGHT
+  ON_CALL
+  OUTREACH
+
+  @@schema("people")
+}
+
+model Shift {
+  id             String    @id @default(uuid()) @db.Uuid
+  scheduleId     String    @map("schedule_id") @db.Uuid
+  organisationId String    @map("organisation_id") @db.Uuid
+  facilityId     String    @map("facility_id") @db.Uuid
+  shiftType      ShiftType @default(MORNING) @map("shift_type")
+  startsAt       DateTime  @map("starts_at") @db.Timestamptz(6)
+  endsAt         DateTime  @map("ends_at") @db.Timestamptz(6)
+  departmentId   String?   @map("department_id") @db.Uuid
+  notes          String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  schedule StaffSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@index([scheduleId, startsAt])
+  @@index([facilityId, startsAt])
+  @@map("shift")
+  @@schema("people")
+}
+
+enum AttendanceEventType {
+  CLOCK_IN
+  CLOCK_OUT
+
+  @@schema("people")
+}
+
+enum AttendanceMethod {
+  QR
+  PIN
+  BIOMETRIC
+  MANUAL
+
+  @@schema("people")
+}
+
+/// APPEND-ONLY. Clock events are facts; two events are two events, which is
+/// why the sync policy for this table is "append both" and never a merge
+/// (doc 10 §5).
+///
+/// A MANUAL entry requires a reason and a recorder, because it is the one
+/// path a person can assert attendance without an event.
+model Attendance {
+  id               String              @id @default(uuid()) @db.Uuid
+  staffId          String              @map("staff_id") @db.Uuid
+  organisationId   String              @map("organisation_id") @db.Uuid
+  facilityId       String              @map("facility_id") @db.Uuid
+  eventType        AttendanceEventType @map("event_type")
+  occurredAt       DateTime            @map("occurred_at") @db.Timestamptz(6)
+  method           AttendanceMethod    @default(PIN)
+  latitude         Decimal?            @db.Decimal(10, 7)
+  longitude        Decimal?            @db.Decimal(10, 7)
+  shiftId          String?             @map("shift_id") @db.Uuid
+  recordedBy       String?             @map("recorded_by") @db.Uuid
+  manualReason     String?             @map("manual_reason")
+  /// Corrections are new rows referencing the original, never edits.
+  correctsId       String?             @map("corrects_id") @db.Uuid
+  correctionReason String?             @map("correction_reason")
+
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  deviceId        String?    @map("device_id")
+  deviceCreatedAt DateTime?  @map("device_created_at") @db.Timestamptz(6)
+  syncStatus      SyncStatus @default(SYNCED) @map("sync_status")
+
+  staff       Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  corrects    Attendance?  @relation("AttendanceCorrection", fields: [correctsId], references: [id], onDelete: SetNull)
+  correctedBy Attendance[] @relation("AttendanceCorrection")
+
+  @@index([staffId, occurredAt])
+  @@index([facilityId, occurredAt])
+  @@map("attendance")
+  @@schema("people")
+}
+
+enum LeaveStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  CANCELLED
+  TAKEN
+
+  @@schema("people")
+}
+
+model Leave {
+  id             String      @id @default(uuid()) @db.Uuid
+  staffId        String      @map("staff_id") @db.Uuid
+  organisationId String      @map("organisation_id") @db.Uuid
+  facilityId     String      @map("facility_id") @db.Uuid
+  leaveType      String      @map("leave_type")
+  startDate      DateTime    @map("start_date") @db.Date
+  endDate        DateTime    @map("end_date") @db.Date
+  days           Decimal     @db.Decimal(5, 1)
+  status         LeaveStatus @default(REQUESTED)
+  reason         String?
+  approvedBy     String?     @map("approved_by") @db.Uuid
+  approvedAt     DateTime?   @map("approved_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId, startDate])
+  @@index([facilityId, status, startDate])
+  @@map("leave")
+  @@schema("people")
+}
+
+enum MetricDirection {
+  HIGHER_BETTER
+  LOWER_BETTER
+
+  @@schema("people")
+}
+
+/// Configurable performance metrics (spec §25).
+///
+/// `sourceQueryId` names the SQL that computes this metric. A metric with no
+/// query cannot be scored — which is what prevents performance being an
+/// opinion typed into a box.
+model PerformanceMetric {
+  id              String          @id @default(uuid()) @db.Uuid
+  organisationId  String          @map("organisation_id") @db.Uuid
+  facilityId      String?         @map("facility_id") @db.Uuid
+  code            String
+  name            String
+  definition      String
+  unit            String?
+  direction       MetricDirection @default(HIGHER_BETTER)
+  sourceQueryId   String?         @map("source_query_id")
+  /// Weight in the incentive formula. Patient volume may contribute, but the
+  /// system refuses a configuration in which it is the sole basis (spec §25).
+  weight          Decimal         @default(1) @db.Decimal(8, 4)
+  targetValue     Decimal?        @map("target_value") @db.Decimal(18, 6)
+  isSystemManaged Boolean         @default(false) @map("is_system_managed")
+  status          RecordStatus    @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  results    PerformanceMetricResult[]
+  components IncentiveComponent[]
+
+  @@unique([organisationId, code])
+  @@map("performance_metric")
+  @@schema("people")
+}
+
+model PerformanceMetricResult {
+  id              String             @id @default(uuid()) @db.Uuid
+  metricId        String             @map("metric_id") @db.Uuid
+  staffId         String             @map("staff_id") @db.Uuid
+  organisationId  String             @map("organisation_id") @db.Uuid
+  facilityId      String             @map("facility_id") @db.Uuid
+  periodStart     DateTime           @map("period_start") @db.Date
+  periodEnd       DateTime           @map("period_end") @db.Date
+  value           Decimal            @db.Decimal(18, 6)
+  targetValue     Decimal?           @map("target_value") @db.Decimal(18, 6)
+  normalisedScore Decimal?           @map("normalised_score") @db.Decimal(6, 4)
+  /// The inputs the computation actually used — provenance, so a disputed
+  /// score can be re-examined.
+  inputs          Json?
+  classification  DataClassification @default(ACTUAL)
+  computedAt      DateTime           @default(now()) @map("computed_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  metric PerformanceMetric @relation(fields: [metricId], references: [id], onDelete: Cascade)
+  staff  Staff             @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([metricId, staffId, periodStart, periodEnd])
+  @@index([facilityId, periodStart])
+  @@map("performance_metric_result")
+  @@schema("people")
+}
+
+model PerformanceReview {
+  id               String    @id @default(uuid()) @db.Uuid
+  staffId          String    @map("staff_id") @db.Uuid
+  organisationId   String    @map("organisation_id") @db.Uuid
+  facilityId       String    @map("facility_id") @db.Uuid
+  periodStart      DateTime  @map("period_start") @db.Date
+  periodEnd        DateTime  @map("period_end") @db.Date
+  overallScore     Decimal?  @map("overall_score") @db.Decimal(6, 3)
+  strengths        String?
+  developmentAreas String?   @map("development_areas")
+  agreedActions    String?   @map("agreed_actions")
+  reviewerUserId   String?   @map("reviewer_user_id") @db.Uuid
+  reviewedAt       DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  staffComment     String?   @map("staff_comment")
+  acknowledgedAt   DateTime? @map("acknowledged_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, periodStart, periodEnd])
+  @@index([facilityId, periodEnd])
+  @@map("performance_review")
+  @@schema("people")
+}
+
+enum IncentiveStatus {
+  DRAFT
+  COMPUTED
+  APPROVED
+  PAID
+  CANCELLED
+
+  @@schema("people")
+}
+
+/// Incentive calculations must be transparent and auditable (spec §25).
+///
+/// The total is the sum of its components, and each component records the
+/// metric, the value, the weight and the human-readable formula that produced
+/// it. Nobody has to trust the number — they can read how it was made.
+model StaffIncentive {
+  id               String          @id @default(uuid()) @db.Uuid
+  staffId          String          @map("staff_id") @db.Uuid
+  organisationId   String          @map("organisation_id") @db.Uuid
+  facilityId       String          @map("facility_id") @db.Uuid
+  periodStart      DateTime        @map("period_start") @db.Date
+  periodEnd        DateTime        @map("period_end") @db.Date
+  status           IncentiveStatus @default(DRAFT)
+  totalAmountMinor BigInt          @default(0) @map("total_amount_minor")
+  currency         String          @default("NGN") @db.Char(3)
+  /// The pool this incentive was drawn from, so the total across staff can be
+  /// reconciled against the waterfall's approved incentive step.
+  poolReference    String?         @map("pool_reference")
+  computedAt       DateTime?       @map("computed_at") @db.Timestamptz(6)
+  approvedBy       String?         @map("approved_by") @db.Uuid
+  approvedAt       DateTime?       @map("approved_at") @db.Timestamptz(6)
+  paidPaymentId    String?         @map("paid_payment_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  staff      Staff                @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  components IncentiveComponent[]
+
+  @@unique([staffId, periodStart, periodEnd])
+  @@index([facilityId, status, periodEnd])
+  @@map("staff_incentive")
+  @@schema("people")
+}
+
+model IncentiveComponent {
+  id               String   @id @default(uuid()) @db.Uuid
+  staffIncentiveId String   @map("staff_incentive_id") @db.Uuid
+  metricId         String?  @map("metric_id") @db.Uuid
+  organisationId   String   @map("organisation_id") @db.Uuid
+  label            String
+  metricValue      Decimal? @map("metric_value") @db.Decimal(18, 6)
+  normalisedScore  Decimal? @map("normalised_score") @db.Decimal(6, 4)
+  weight           Decimal  @db.Decimal(8, 4)
+  amountMinor      BigInt   @map("amount_minor")
+  currency         String   @default("NGN") @db.Char(3)
+  /// Human-readable, e.g. "attendance 0.94 x weight 0.25 x pool 120,000 kobo".
+  formulaText      String   @map("formula_text")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  staffIncentive StaffIncentive     @relation(fields: [staffIncentiveId], references: [id], onDelete: Cascade)
+  metric         PerformanceMetric? @relation(fields: [metricId], references: [id], onDelete: SetNull)
+
+  @@index([staffIncentiveId])
+  @@map("incentive_component")
+  @@schema("people")
+}

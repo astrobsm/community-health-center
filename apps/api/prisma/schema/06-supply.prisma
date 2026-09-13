@@ -1,0 +1,357 @@
+// =============================================================================
+// SUPPLY — inventory and the stock ledger. The inventory truth.
+//
+// Quantity on hand is not a number anyone maintains. It is the sum of every
+// movement that ever happened (doc 14).
+// =============================================================================
+
+model InventoryCategory {
+  id              String  @id @default(uuid()) @db.Uuid
+  organisationId  String? @map("organisation_id") @db.Uuid
+  code            String  @unique
+  name            String
+  parentId        String? @map("parent_id") @db.Uuid
+  isSystemManaged Boolean @default(false) @map("is_system_managed")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  parent   InventoryCategory?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children InventoryCategory[] @relation("CategoryTree")
+  items    InventoryItem[]
+
+  @@map("inventory_category")
+  @@schema("supply")
+}
+
+enum InventoryItemKind {
+  MEDICINE
+  CONSUMABLE
+  REAGENT
+  VACCINE
+  EQUIPMENT_SPARE
+  OFFICE
+  OTHER
+
+  @@schema("supply")
+}
+
+model InventoryItem {
+  id                String            @id @default(uuid()) @db.Uuid
+  facilityId        String            @map("facility_id") @db.Uuid
+  organisationId    String            @map("organisation_id") @db.Uuid
+  categoryId        String?           @map("category_id") @db.Uuid
+  code              String
+  name              String
+  kind              InventoryItemKind @default(CONSUMABLE)
+  unitOfMeasure     String            @map("unit_of_measure")
+  /// Tracer items are those whose availability is a published KPI — a
+  /// stock-out of one is a reportable event (spec §38).
+  isTracer          Boolean           @default(false) @map("is_tracer")
+  requiresColdChain Boolean           @default(false) @map("requires_cold_chain")
+  isControlled      Boolean           @default(false) @map("is_controlled")
+  status            RecordStatus      @default(ACTIVE)
+  notes             String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  facility             Facility              @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  category             InventoryCategory?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  batches              InventoryBatch[]
+  reorderRule          ReorderRule?
+  medication           Medication?
+  stockCountLines      StockCountLine[]
+  purchaseRequestLines PurchaseRequestLine[]
+  purchaseOrderLines   PurchaseOrderLine[]
+
+  @@unique([facilityId, code])
+  @@index([organisationId, facilityId, kind])
+  @@index([facilityId, isTracer])
+  @@map("inventory_item")
+  @@schema("supply")
+}
+
+enum LocationType {
+  MAIN_STORE
+  DISPENSARY
+  LABORATORY
+  WARD
+  THEATRE
+  OUTREACH_KIT
+  QUARANTINE
+
+  @@schema("supply")
+}
+
+model StockLocation {
+  id             String       @id @default(uuid()) @db.Uuid
+  facilityId     String       @map("facility_id") @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  roomId         String?      @map("room_id") @db.Uuid
+  code           String
+  name           String
+  locationType   LocationType @default(MAIN_STORE) @map("location_type")
+  status         RecordStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  facility         Facility           @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  room             Room?              @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  transactionsFrom StockTransaction[] @relation("FromLocation")
+  transactionsTo   StockTransaction[] @relation("ToLocation")
+  stockCounts      StockCount[]
+
+  @@unique([facilityId, code])
+  @@index([organisationId, facilityId])
+  @@map("stock_location")
+  @@schema("supply")
+}
+
+enum BatchStatus {
+  ACTIVE
+  NEAR_EXPIRY
+  EXPIRED
+  QUARANTINED
+  RECALLED
+  DEPLETED
+
+  @@schema("supply")
+}
+
+/// Full traceability: a patient's dispensing record leads back to this batch,
+/// to the goods receipt, to the purchase order, to the supplier — which is
+/// exactly what a product recall requires.
+model InventoryBatch {
+  id                 String      @id @default(uuid()) @db.Uuid
+  inventoryItemId    String      @map("inventory_item_id") @db.Uuid
+  organisationId     String      @map("organisation_id") @db.Uuid
+  facilityId         String      @map("facility_id") @db.Uuid
+  supplierId         String?     @map("supplier_id") @db.Uuid
+  goodsReceiptLineId String?     @map("goods_receipt_line_id") @db.Uuid
+  batchNumber        String      @map("batch_number")
+  expiryDate         DateTime?   @map("expiry_date") @db.Date
+  quantityReceived   Decimal     @map("quantity_received") @db.Decimal(14, 3)
+  /// THE ONE DELIBERATE DERIVED CACHE IN THIS SCHEMA.
+  ///
+  /// Maintained exclusively by a database trigger on stock_transaction; no
+  /// application code writes it. Reconciled nightly against the ledger, and a
+  /// mismatch is a CRITICAL alert in which the ledger — never this column — is
+  /// treated as correct (doc 14 §2).
+  quantityOnHand     Decimal     @default(0) @map("quantity_on_hand") @db.Decimal(14, 3)
+  unitCostMinor      BigInt      @map("unit_cost_minor")
+  currency           String      @default("NGN") @db.Char(3)
+  status             BatchStatus @default(ACTIVE)
+  receivedAt         DateTime    @default(now()) @map("received_at") @db.Timestamptz(6)
+  quarantineReason   String?     @map("quarantine_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  inventoryItem    InventoryItem      @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  supplier         Supplier?          @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  goodsReceiptLine GoodsReceiptLine?  @relation(fields: [goodsReceiptLineId], references: [id], onDelete: SetNull)
+  transactions     StockTransaction[]
+  dispensings      Dispensing[]
+  stockCountLines  StockCountLine[]
+
+  @@unique([inventoryItemId, batchNumber])
+  /// Supports FEFO selection: expiry ascending among batches that still have
+  /// stock (doc 14 §4).
+  @@index([inventoryItemId, expiryDate, status])
+  @@index([facilityId, expiryDate])
+  @@map("inventory_batch")
+  @@schema("supply")
+}
+
+enum StockTransactionType {
+  RECEIPT
+  ISSUE
+  TRANSFER
+  ADJUSTMENT
+  RETURN
+  WASTAGE
+
+  @@schema("supply")
+}
+
+/// APPEND-ONLY. The only table that can change stock.
+///
+/// `quantity` is SIGNED — one column, so the ledger sum is trivially correct.
+/// Storing quantityIn and quantityOut separately would invite a row with both
+/// populated (doc 14 §1).
+///
+/// ADJUSTMENT and WASTAGE are the only types a human originates directly;
+/// every other type is created by a workflow. That is what stops the ledger
+/// becoming an editable spreadsheet.
+model StockTransaction {
+  id               String               @id @default(uuid()) @db.Uuid
+  inventoryBatchId String               @map("inventory_batch_id") @db.Uuid
+  organisationId   String               @map("organisation_id") @db.Uuid
+  facilityId       String               @map("facility_id") @db.Uuid
+  transactionType  StockTransactionType @map("transaction_type")
+  quantity         Decimal              @db.Decimal(14, 3)
+  fromLocationId   String?              @map("from_location_id") @db.Uuid
+  toLocationId     String?              @map("to_location_id") @db.Uuid
+  unitCostMinor    BigInt?              @map("unit_cost_minor")
+  currency         String               @default("NGN") @db.Char(3)
+  /// Polymorphic lineage: 'dispensing' | 'goods_receipt' | 'lab_consumption'
+  /// | 'stock_adjustment' | 'transfer' | 'expiry'.
+  sourceType       String               @map("source_type")
+  sourceId         String?              @map("source_id") @db.Uuid
+  /// Mandatory for ADJUSTMENT and WASTAGE.
+  reasonCode       String?              @map("reason_code")
+  reasonNote       String?              @map("reason_note")
+  approvedBy       String?              @map("approved_by") @db.Uuid
+  occurredAt       DateTime             @default(now()) @map("occurred_at") @db.Timestamptz(6)
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  inventoryBatch InventoryBatch @relation(fields: [inventoryBatchId], references: [id], onDelete: Restrict)
+  fromLocation   StockLocation? @relation("FromLocation", fields: [fromLocationId], references: [id], onDelete: SetNull)
+  toLocation     StockLocation? @relation("ToLocation", fields: [toLocationId], references: [id], onDelete: SetNull)
+
+  @@index([inventoryBatchId, occurredAt])
+  @@index([facilityId, occurredAt])
+  @@index([sourceType, sourceId])
+  @@map("stock_transaction")
+  @@schema("supply")
+}
+
+/// Reorder levels are COMPUTED from actual consumption and recalculated
+/// monthly. A manual override is permitted, must be justified, and is shown
+/// alongside the computed value so the difference stays visible (doc 14 §6).
+model ReorderRule {
+  id                      String    @id @default(uuid()) @db.Uuid
+  inventoryItemId         String    @unique @map("inventory_item_id") @db.Uuid
+  organisationId          String    @map("organisation_id") @db.Uuid
+  facilityId              String    @map("facility_id") @db.Uuid
+  averageDailyConsumption Decimal?  @map("average_daily_consumption") @db.Decimal(14, 4)
+  leadTimeDays            Int       @default(14) @map("lead_time_days")
+  safetyFactor            Decimal   @default(1.5) @map("safety_factor") @db.Decimal(6, 3)
+  computedReorderLevel    Decimal?  @map("computed_reorder_level") @db.Decimal(14, 3)
+  computedCriticalLevel   Decimal?  @map("computed_critical_level") @db.Decimal(14, 3)
+  manualReorderLevel      Decimal?  @map("manual_reorder_level") @db.Decimal(14, 3)
+  manualOverrideReason    String?   @map("manual_override_reason")
+  lastComputedAt          DateTime? @map("last_computed_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId])
+  @@map("reorder_rule")
+  @@schema("supply")
+}
+
+enum StockCountStatus {
+  DRAFT
+  IN_PROGRESS
+  UNDER_REVIEW
+  APPROVED
+  CANCELLED
+
+  @@schema("supply")
+}
+
+model StockCount {
+  id             String           @id @default(uuid()) @db.Uuid
+  organisationId String           @map("organisation_id") @db.Uuid
+  facilityId     String           @map("facility_id") @db.Uuid
+  locationId     String?          @map("location_id") @db.Uuid
+  reference      String
+  status         StockCountStatus @default(DRAFT)
+  /// A blind count hides expected quantities from the counter, which is the
+  /// only way a count independently verifies the ledger.
+  isBlind        Boolean          @default(true) @map("is_blind")
+  startedAt      DateTime?        @map("started_at") @db.Timestamptz(6)
+  completedAt    DateTime?        @map("completed_at") @db.Timestamptz(6)
+  countedBy      String?          @map("counted_by") @db.Uuid
+  approvedBy     String?          @map("approved_by") @db.Uuid
+  approvedAt     DateTime?        @map("approved_at") @db.Timestamptz(6)
+  notes          String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  location StockLocation?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  lines    StockCountLine[]
+
+  @@unique([organisationId, reference])
+  @@index([facilityId, status])
+  @@map("stock_count")
+  @@schema("supply")
+}
+
+model StockCountLine {
+  id               String  @id @default(uuid()) @db.Uuid
+  stockCountId     String  @map("stock_count_id") @db.Uuid
+  inventoryItemId  String  @map("inventory_item_id") @db.Uuid
+  inventoryBatchId String? @map("inventory_batch_id") @db.Uuid
+  organisationId   String  @map("organisation_id") @db.Uuid
+  facilityId       String  @map("facility_id") @db.Uuid
+  /// Snapshot of the ledger balance at count time, for variance analysis.
+  expectedQuantity Decimal @map("expected_quantity") @db.Decimal(14, 3)
+  countedQuantity  Decimal @map("counted_quantity") @db.Decimal(14, 3)
+  variance         Decimal @db.Decimal(14, 3)
+  varianceReason   String? @map("variance_reason")
+  investigatedBy   String? @map("investigated_by") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  stockCount     StockCount       @relation(fields: [stockCountId], references: [id], onDelete: Cascade)
+  inventoryItem  InventoryItem    @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  inventoryBatch InventoryBatch?  @relation(fields: [inventoryBatchId], references: [id], onDelete: SetNull)
+  adjustment     StockAdjustment?
+
+  @@index([stockCountId])
+  @@map("stock_count_line")
+  @@schema("supply")
+}
+
+/// Every adjustment resolves to a stock_transaction of type ADJUSTMENT.
+/// The adjustment record holds the justification and the approval; the ledger
+/// holds the movement.
+model StockAdjustment {
+  id                 String    @id @default(uuid()) @db.Uuid
+  stockCountLineId   String?   @unique @map("stock_count_line_id") @db.Uuid
+  organisationId     String    @map("organisation_id") @db.Uuid
+  facilityId         String    @map("facility_id") @db.Uuid
+  inventoryBatchId   String    @map("inventory_batch_id") @db.Uuid
+  quantityDelta      Decimal   @map("quantity_delta") @db.Decimal(14, 3)
+  reasonCode         String    @map("reason_code")
+  reasonNote         String?   @map("reason_note")
+  /// Segregation of duties: the person who records an adjustment may not
+  /// approve it (doc 18 §9).
+  requestedBy        String?   @map("requested_by") @db.Uuid
+  approvedBy         String?   @map("approved_by") @db.Uuid
+  approvedAt         DateTime? @map("approved_at") @db.Timestamptz(6)
+  stockTransactionId String?   @map("stock_transaction_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  stockCountLine StockCountLine? @relation(fields: [stockCountLineId], references: [id], onDelete: SetNull)
+
+  @@index([facilityId, createdAt])
+  @@map("stock_adjustment")
+  @@schema("supply")
+}

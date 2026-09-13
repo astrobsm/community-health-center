@@ -1,0 +1,803 @@
+// =============================================================================
+// PLAN — needs, CAPEX, the five-year model, partnership, proposals, contracts
+//
+// The bridge between "what we found" and "what we will do about it".
+// Every financial output here is PROJECTED or ASSUMPTION. Nothing in this
+// schema is ever ACTUAL — actuals live in `fin`.
+// =============================================================================
+
+/// A gap, derived from one or more findings. Never invented independently:
+/// creating a need without a finding requires an explicit unlinkedReason.
+model Need {
+  id             String  @id @default(uuid()) @db.Uuid
+  organisationId String  @map("organisation_id") @db.Uuid
+  facilityId     String  @map("facility_id") @db.Uuid
+  findingId      String? @map("finding_id") @db.Uuid
+  reference      String
+  title          String
+  description    String?
+  domainCode     String? @map("domain_code")
+  /// Required when findingId is null — a need with no observed basis must say
+  /// why it exists.
+  unlinkedReason String? @map("unlinked_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  finding         AssessmentFinding? @relation(fields: [findingId], references: [id], onDelete: SetNull)
+  recommendations Recommendation[]
+
+  @@unique([facilityId, reference])
+  @@index([organisationId, facilityId])
+  @@map("need")
+  @@schema("plan")
+}
+
+model Recommendation {
+  id              String        @id @default(uuid()) @db.Uuid
+  needId          String        @map("need_id") @db.Uuid
+  organisationId  String        @map("organisation_id") @db.Uuid
+  facilityId      String        @map("facility_id") @db.Uuid
+  reference       String
+  title           String
+  description     String?
+  priorityClass   PriorityClass @default(P3) @map("priority_class")
+  priorityScore   Decimal?      @map("priority_score") @db.Decimal(8, 4)
+  /// The inputs that produced the score, kept so a later reviewer can see
+  /// exactly why something was ranked as it was (spec §18).
+  priorityInputs  Json?         @map("priority_inputs")
+  expectedOutcome String?       @map("expected_outcome")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  need       Need             @relation(fields: [needId], references: [id], onDelete: Cascade)
+  capexLines CapexLine[]
+  projects   CapitalProject[]
+
+  @@unique([facilityId, reference])
+  @@index([organisationId, facilityId, priorityClass])
+  @@map("recommendation")
+  @@schema("plan")
+}
+
+enum CapexCategory {
+  BUILDING
+  EQUIPMENT
+  LABORATORY
+  PHARMACY
+  FURNITURE
+  ICT
+  POWER
+  WATER
+  SECURITY
+  WASTE
+  INITIAL_STOCK
+  WORKING_CAPITAL
+  TRAINING
+  CONTINGENCY
+
+  @@schema("plan")
+}
+
+model CapexPlan {
+  id             String         @id @default(uuid()) @db.Uuid
+  facilityId     String         @map("facility_id") @db.Uuid
+  organisationId String         @map("organisation_id") @db.Uuid
+  name           String
+  versionNumber  Int            @default(1) @map("version_number")
+  status         ApprovalStatus @default(DRAFT)
+  currency       String         @default("NGN") @db.Char(3)
+  approvedBy     String?        @map("approved_by") @db.Uuid
+  approvedAt     DateTime?      @map("approved_at") @db.Timestamptz(6)
+  notes          String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  facility           Facility            @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  lines              CapexLine[]
+  workingCapitalPlan WorkingCapitalPlan?
+
+  @@unique([facilityId, name, versionNumber])
+  @@index([organisationId, facilityId])
+  @@map("capex_plan")
+  @@schema("plan")
+}
+
+/// One costed item.
+///
+/// `estimatedCostMinor` is ESTIMATED; `approvedCostMinor` becomes ACTUAL only
+/// once an approval record exists. Spent is never stored here — it is derived
+/// from postings (doc 15 §4).
+model CapexLine {
+  id                 String             @id @default(uuid()) @db.Uuid
+  capexPlanId        String             @map("capex_plan_id") @db.Uuid
+  recommendationId   String?            @map("recommendation_id") @db.Uuid
+  organisationId     String             @map("organisation_id") @db.Uuid
+  facilityId         String             @map("facility_id") @db.Uuid
+  category           CapexCategory
+  description        String
+  quantity           Decimal            @default(1) @db.Decimal(12, 3)
+  unit               String?
+  unitCostMinor      BigInt             @map("unit_cost_minor")
+  estimatedCostMinor BigInt             @map("estimated_cost_minor")
+  approvedCostMinor  BigInt?            @map("approved_cost_minor")
+  currency           String             @default("NGN") @db.Char(3)
+  priorityClass      PriorityClass      @default(P3) @map("priority_class")
+  classification     DataClassification @default(ESTIMATED)
+  costBasis          String?            @map("cost_basis")
+  status             ApprovalStatus     @default(DRAFT)
+  approvedBy         String?            @map("approved_by") @db.Uuid
+  approvedAt         DateTime?          @map("approved_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  capexPlan      CapexPlan        @relation(fields: [capexPlanId], references: [id], onDelete: Cascade)
+  recommendation Recommendation?  @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  budgetLines    BudgetLine[]
+  projects       CapitalProject[]
+
+  @@index([capexPlanId, category])
+  @@index([organisationId, facilityId])
+  @@map("capex_line")
+  @@schema("plan")
+}
+
+model WorkingCapitalPlan {
+  id                String             @id @default(uuid()) @db.Uuid
+  capexPlanId       String             @unique @map("capex_plan_id") @db.Uuid
+  organisationId    String             @map("organisation_id") @db.Uuid
+  facilityId        String             @map("facility_id") @db.Uuid
+  monthsOfCover     Int                @default(3) @map("months_of_cover")
+  openingStockMinor BigInt             @default(0) @map("opening_stock_minor")
+  staffCostsMinor   BigInt             @default(0) @map("staff_costs_minor")
+  utilitiesMinor    BigInt             @default(0) @map("utilities_minor")
+  contingencyMinor  BigInt             @default(0) @map("contingency_minor")
+  totalMinor        BigInt             @default(0) @map("total_minor")
+  currency          String             @default("NGN") @db.Char(3)
+  classification    DataClassification @default(ESTIMATED)
+  assumptionsNote   String?            @map("assumptions_note")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  capexPlan CapexPlan @relation(fields: [capexPlanId], references: [id], onDelete: Cascade)
+
+  @@map("working_capital_plan")
+  @@schema("plan")
+}
+
+// -----------------------------------------------------------------------------
+// Five-year financial model — spec §34, doc 12 §7
+// -----------------------------------------------------------------------------
+
+enum ModelStatus {
+  DRAFT
+  UNDER_REVIEW
+  APPROVED
+  SUPERSEDED
+
+  @@schema("plan")
+}
+
+model FinancialModel {
+  id             String      @id @default(uuid()) @db.Uuid
+  facilityId     String      @map("facility_id") @db.Uuid
+  organisationId String      @map("organisation_id") @db.Uuid
+  name           String
+  versionNumber  Int         @default(1) @map("version_number")
+  status         ModelStatus @default(DRAFT)
+  /// 60 monthly periods = five years (assumption A3).
+  horizonMonths  Int         @default(60) @map("horizon_months")
+  startDate      DateTime    @map("start_date") @db.Date
+  currency       String      @default("NGN") @db.Char(3)
+  approvedBy     String?     @map("approved_by") @db.Uuid
+  approvedAt     DateTime?   @map("approved_at") @db.Timestamptz(6)
+  supersededById String?     @map("superseded_by_id") @db.Uuid
+  changeReason   String?     @map("change_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  facility     Facility          @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  supersededBy FinancialModel?   @relation("ModelSupersession", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersedes   FinancialModel[]  @relation("ModelSupersession")
+  assumptions  ModelAssumption[]
+  scenarios    ModelScenario[]
+  partnerships Partnership[]
+
+  @@unique([facilityId, name, versionNumber])
+  @@index([organisationId, facilityId, status])
+  @@map("financial_model")
+  @@schema("plan")
+}
+
+/// An input chosen by a modeller. Always classified ASSUMPTION — it can never
+/// be promoted to a fact (doc 00 §6).
+model ModelAssumption {
+  id              String             @id @default(uuid()) @db.Uuid
+  modelId         String             @map("model_id") @db.Uuid
+  organisationId  String             @map("organisation_id") @db.Uuid
+  code            String
+  label           String
+  numericValue    Decimal            @map("numeric_value") @db.Decimal(18, 6)
+  unit            String?
+  /// Why this value was chosen. An assumption without a rationale is a guess
+  /// nobody can later evaluate.
+  rationale       String?
+  sourceReference String?            @map("source_reference")
+  classification  DataClassification @default(ASSUMPTION)
+  /// Locked once the model is approved. Changing it requires
+  /// financial_model.unlock and produces an impact preview (spec §72).
+  isLocked        Boolean            @default(false) @map("is_locked")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  model FinancialModel @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@unique([modelId, code])
+  @@map("model_assumption")
+  @@schema("plan")
+}
+
+enum ScenarioType {
+  CONSERVATIVE
+  BASE
+  GROWTH
+  STRESS
+
+  @@schema("plan")
+}
+
+/// Each scenario carries a FULL assumption set, not a multiplier on a base
+/// case — a stress case with different cost behaviour cannot be expressed as
+/// one scalar (doc 12 §7).
+model ModelScenario {
+  id                  String       @id @default(uuid()) @db.Uuid
+  modelId             String       @map("model_id") @db.Uuid
+  organisationId      String       @map("organisation_id") @db.Uuid
+  scenarioType        ScenarioType @map("scenario_type")
+  name                String
+  description         String?
+  assumptionOverrides Json?        @map("assumption_overrides")
+  /// Null when the scenario never breaks even — never a fabricated month.
+  breakEvenMonth      Int?         @map("break_even_month")
+  paybackMonth        Int?         @map("payback_month")
+  computedAt          DateTime?    @map("computed_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  model       FinancialModel    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  projections ModelProjection[]
+
+  @@unique([modelId, scenarioType])
+  @@map("model_scenario")
+  @@schema("plan")
+}
+
+/// One projected month. Always PROJECTED; the API schema makes it structurally
+/// impossible to present one of these as an actual.
+model ModelProjection {
+  id                     String             @id @default(uuid()) @db.Uuid
+  scenarioId             String             @map("scenario_id") @db.Uuid
+  organisationId         String             @map("organisation_id") @db.Uuid
+  periodIndex            Int                @map("period_index")
+  periodStart            DateTime           @map("period_start") @db.Date
+  patientCount           Decimal            @map("patient_count") @db.Decimal(12, 2)
+  revenueMinor           BigInt             @map("revenue_minor")
+  collectionsMinor       BigInt             @map("collections_minor")
+  directCostMinor        BigInt             @map("direct_cost_minor")
+  opexMinor              BigInt             @map("opex_minor")
+  staffCostMinor         BigInt             @map("staff_cost_minor")
+  incentiveMinor         BigInt             @map("incentive_minor")
+  depreciationMinor      BigInt             @default(0) @map("depreciation_minor")
+  surplusMinor           BigInt             @map("surplus_minor")
+  capexMinor             BigInt             @default(0) @map("capex_minor")
+  cashBalanceMinor       BigInt             @map("cash_balance_minor")
+  cumulativeSurplusMinor BigInt             @map("cumulative_surplus_minor")
+  currency               String             @default("NGN") @db.Char(3)
+  classification         DataClassification @default(PROJECTED)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  scenario ModelScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+
+  @@unique([scenarioId, periodIndex])
+  @@index([scenarioId, periodStart])
+  @@map("model_projection")
+  @@schema("plan")
+}
+
+// -----------------------------------------------------------------------------
+// Partnership — spec §§35-37, 73-74
+// -----------------------------------------------------------------------------
+
+enum PartnershipStatus {
+  PROPOSED
+  UNDER_NEGOTIATION
+  AGREED
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+  COMPLETED
+
+  @@schema("plan")
+}
+
+model Partnership {
+  id               String            @id @default(uuid()) @db.Uuid
+  facilityId       String            @map("facility_id") @db.Uuid
+  organisationId   String            @map("organisation_id") @db.Uuid
+  financialModelId String?           @map("financial_model_id") @db.Uuid
+  name             String
+  status           PartnershipStatus @default(PROPOSED)
+  commencementDate DateTime?         @map("commencement_date") @db.Date
+  termMonths       Int?              @map("term_months")
+  /// Day 0 for the First 100 Days programme is taken from the executed
+  /// contract, not from this field (doc 15 §7).
+  notes            String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  facility       Facility                @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  financialModel FinancialModel?         @relation(fields: [financialModelId], references: [id], onDelete: SetNull)
+  parties        PartnershipParty[]
+  obligations    PartnershipObligation[]
+  revenueModels  RevenueShareModel[]
+  recoveryEvents CapitalRecoveryEvent[]
+  contracts      Contract[]
+
+  @@index([organisationId, facilityId, status])
+  @@map("partnership")
+  @@schema("plan")
+}
+
+enum PartyRole {
+  GOVERNMENT
+  PARTNER
+  COMMUNITY
+  FUNDER
+  OTHER
+
+  @@schema("plan")
+}
+
+model PartnershipParty {
+  id             String    @id @default(uuid()) @db.Uuid
+  partnershipId  String    @map("partnership_id") @db.Uuid
+  organisationId String    @map("organisation_id") @db.Uuid
+  partyRole      PartyRole @map("party_role")
+  legalName      String    @map("legal_name")
+  representative String?
+  title          String?
+  contactEmail   String?   @map("contact_email")
+  contactPhone   String?   @map("contact_phone")
+  address        String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  partnership    Partnership             @relation(fields: [partnershipId], references: [id], onDelete: Cascade)
+  waterfallSteps WaterfallStep[]
+  obligations    PartnershipObligation[]
+  recoveryEvents CapitalRecoveryEvent[]
+
+  @@index([partnershipId, partyRole])
+  @@map("partnership_party")
+  @@schema("plan")
+}
+
+enum ObligationStatus {
+  PENDING
+  IN_PROGRESS
+  MET
+  BREACHED
+  WAIVED
+
+  @@schema("plan")
+}
+
+model PartnershipObligation {
+  id             String           @id @default(uuid()) @db.Uuid
+  partnershipId  String           @map("partnership_id") @db.Uuid
+  partyId        String?          @map("party_id") @db.Uuid
+  organisationId String           @map("organisation_id") @db.Uuid
+  reference      String
+  description    String
+  dueDate        DateTime?        @map("due_date") @db.Date
+  status         ObligationStatus @default(PENDING)
+  evidenceNote   String?          @map("evidence_note")
+  metAt          DateTime?        @map("met_at") @db.Timestamptz(6)
+  verifiedBy     String?          @map("verified_by") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  partnership Partnership       @relation(fields: [partnershipId], references: [id], onDelete: Cascade)
+  party       PartnershipParty? @relation(fields: [partyId], references: [id], onDelete: SetNull)
+
+  @@index([partnershipId, status])
+  @@map("partnership_obligation")
+  @@schema("plan")
+}
+
+enum RevenueShareType {
+  SURPLUS_SHARE
+  GROSS_REVENUE_SHARE
+  HYBRID
+
+  @@schema("plan")
+}
+
+/// Versioned with an effective date range.
+///
+/// The version in force on the period being computed is always used, so a
+/// renegotiation next year cannot retroactively change last year's government
+/// entitlement (doc 12 §9).
+model RevenueShareModel {
+  id             String           @id @default(uuid()) @db.Uuid
+  partnershipId  String           @map("partnership_id") @db.Uuid
+  organisationId String           @map("organisation_id") @db.Uuid
+  name           String
+  shareType      RevenueShareType @map("share_type")
+  versionNumber  Int              @default(1) @map("version_number")
+  effectiveFrom  DateTime         @map("effective_from") @db.Date
+  effectiveTo    DateTime?        @map("effective_to") @db.Date
+  approvedBy     String?          @map("approved_by") @db.Uuid
+  approvedAt     DateTime?        @map("approved_at") @db.Timestamptz(6)
+  notes          String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  partnership Partnership     @relation(fields: [partnershipId], references: [id], onDelete: Cascade)
+  steps       WaterfallStep[]
+
+  @@unique([partnershipId, versionNumber])
+  @@index([partnershipId, effectiveFrom])
+  @@map("revenue_share_model")
+  @@schema("plan")
+}
+
+enum WaterfallBasis {
+  GROSS_REVENUE
+  OPERATING_SURPLUS
+  FIXED
+  RESIDUAL
+
+  @@schema("plan")
+}
+
+/// The waterfall is ordered CONFIGURATION, never code.
+/// No percentage is hard-coded anywhere in this system (spec §35).
+model WaterfallStep {
+  id                  String         @id @default(uuid()) @db.Uuid
+  revenueShareModelId String         @map("revenue_share_model_id") @db.Uuid
+  organisationId      String         @map("organisation_id") @db.Uuid
+  sequence            Int
+  label               String
+  basis               WaterfallBasis
+  /// Proportion of the basis, 0..1. Null for FIXED and RESIDUAL steps.
+  rate                Decimal?       @db.Decimal(12, 6)
+  fixedAmountMinor    BigInt?        @map("fixed_amount_minor")
+  capMinor            BigInt?        @map("cap_minor")
+  floorMinor          BigInt?        @map("floor_minor")
+  beneficiaryPartyId  String?        @map("beneficiary_party_id") @db.Uuid
+  accountCode         String?        @map("account_code")
+  notes               String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  revenueShareModel RevenueShareModel @relation(fields: [revenueShareModelId], references: [id], onDelete: Cascade)
+  beneficiaryParty  PartnershipParty? @relation(fields: [beneficiaryPartyId], references: [id], onDelete: SetNull)
+
+  @@unique([revenueShareModelId, sequence])
+  @@map("waterfall_step")
+  @@schema("plan")
+}
+
+enum RecoveryEventType {
+  INVESTMENT
+  RECOVERY
+  RETURN
+
+  @@schema("plan")
+}
+
+/// Append-only. Each row references the payment that funded it, so a partner
+/// cannot claim recovery of money that was never spent — enforced by a foreign
+/// key, not by policy (doc 12 §10).
+model CapitalRecoveryEvent {
+  id              String             @id @default(uuid()) @db.Uuid
+  partnershipId   String             @map("partnership_id") @db.Uuid
+  partyId         String?            @map("party_id") @db.Uuid
+  organisationId  String             @map("organisation_id") @db.Uuid
+  facilityId      String             @map("facility_id") @db.Uuid
+  eventType       RecoveryEventType  @map("event_type")
+  amountMinor     BigInt             @map("amount_minor")
+  currency        String             @default("NGN") @db.Char(3)
+  occurredOn      DateTime           @map("occurred_on") @db.Date
+  sourcePaymentId String?            @map("source_payment_id") @db.Uuid
+  description     String?
+  classification  DataClassification @default(ACTUAL)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+
+  partnership   Partnership       @relation(fields: [partnershipId], references: [id], onDelete: Restrict)
+  party         PartnershipParty? @relation(fields: [partyId], references: [id], onDelete: SetNull)
+  sourcePayment Payment?          @relation(fields: [sourcePaymentId], references: [id], onDelete: SetNull)
+
+  @@index([partnershipId, eventType, occurredOn])
+  @@map("capital_recovery_event")
+  @@schema("plan")
+}
+
+// -----------------------------------------------------------------------------
+// Proposals, letters, contracts, MOU
+// -----------------------------------------------------------------------------
+
+model Proposal {
+  id             String         @id @default(uuid()) @db.Uuid
+  facilityId     String         @map("facility_id") @db.Uuid
+  organisationId String         @map("organisation_id") @db.Uuid
+  title          String
+  reference      String
+  versionNumber  Int            @default(1) @map("version_number")
+  status         ApprovalStatus @default(DRAFT)
+  submittedTo    String?        @map("submitted_to")
+  submittedAt    DateTime?      @map("submitted_at") @db.Timestamptz(6)
+  approvedBy     String?        @map("approved_by") @db.Uuid
+  approvedAt     DateTime?      @map("approved_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  facility  Facility          @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  sections  ProposalSection[]
+  approvals Approval[]
+
+  @@unique([facilityId, reference, versionNumber])
+  @@index([organisationId, facilityId, status])
+  @@map("proposal")
+  @@schema("plan")
+}
+
+model ProposalSection {
+  id             String  @id @default(uuid()) @db.Uuid
+  proposalId     String  @map("proposal_id") @db.Uuid
+  organisationId String  @map("organisation_id") @db.Uuid
+  sequence       Int
+  heading        String
+  /// Narrative only. Quantitative content is resolved from queries at render
+  /// time — there is no field here into which a figure can be typed
+  /// (doc 16 §1).
+  bodyText       String? @map("body_text")
+  dataSourceKey  String? @map("data_source_key")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  proposal Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId, sequence])
+  @@map("proposal_section")
+  @@schema("plan")
+}
+
+model LetterTemplate {
+  id              String  @id @default(uuid()) @db.Uuid
+  organisationId  String? @map("organisation_id") @db.Uuid
+  code            String  @unique
+  name            String
+  subjectTemplate String  @map("subject_template")
+  bodyTemplate    String  @map("body_template")
+  isSystemManaged Boolean @default(false) @map("is_system_managed")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  letters Letter[]
+
+  @@map("letter_template")
+  @@schema("plan")
+}
+
+enum LetterStatus {
+  DRAFT
+  APPROVED
+  DISPATCHED
+  ACKNOWLEDGED
+
+  @@schema("plan")
+}
+
+model Letter {
+  id               String       @id @default(uuid()) @db.Uuid
+  templateId       String?      @map("template_id") @db.Uuid
+  organisationId   String       @map("organisation_id") @db.Uuid
+  facilityId       String       @map("facility_id") @db.Uuid
+  reference        String
+  subject          String
+  bodyText         String       @map("body_text")
+  recipientName    String       @map("recipient_name")
+  recipientTitle   String?      @map("recipient_title")
+  recipientOffice  String?      @map("recipient_office")
+  recipientAddress String?      @map("recipient_address")
+  senderName       String?      @map("sender_name")
+  senderTitle      String?      @map("sender_title")
+  status           LetterStatus @default(DRAFT)
+  dispatchedAt     DateTime?    @map("dispatched_at") @db.Timestamptz(6)
+  dispatchMethod   String?      @map("dispatch_method")
+  enclosures       String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  template LetterTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@unique([organisationId, reference])
+  @@index([facilityId, status])
+  @@map("letter")
+  @@schema("plan")
+}
+
+enum ContractType {
+  MOU
+  MANAGEMENT_AGREEMENT
+  SERVICE_AGREEMENT
+  AMENDMENT
+
+  @@schema("plan")
+}
+
+enum ContractStatus {
+  DRAFT
+  UNDER_LEGAL_REVIEW
+  UNDER_GOVERNMENT_REVIEW
+  AGREED
+  EXECUTED
+  TERMINATED
+  EXPIRED
+
+  @@schema("plan")
+}
+
+model Contract {
+  id             String         @id @default(uuid()) @db.Uuid
+  partnershipId  String         @map("partnership_id") @db.Uuid
+  organisationId String         @map("organisation_id") @db.Uuid
+  facilityId     String         @map("facility_id") @db.Uuid
+  contractType   ContractType   @map("contract_type")
+  reference      String
+  title          String
+  status         ContractStatus @default(DRAFT)
+  /// Set only when the executed file is uploaded and signatories recorded.
+  /// Until then every generated copy carries the mandatory draft banner.
+  executedAt     DateTime?      @map("executed_at") @db.Timestamptz(6)
+  effectiveFrom  DateTime?      @map("effective_from") @db.Date
+  effectiveTo    DateTime?      @map("effective_to") @db.Date
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  version   Int      @default(1)
+
+  partnership Partnership       @relation(fields: [partnershipId], references: [id], onDelete: Restrict)
+  versions    ContractVersion[]
+  approvals   Approval[]
+
+  @@unique([organisationId, reference])
+  @@index([partnershipId, status])
+  @@map("contract")
+  @@schema("plan")
+}
+
+/// Immutable once created. Legal documents do not merge and are never
+/// overwritten (doc 03 §2, class 4).
+model ContractVersion {
+  id             String   @id @default(uuid()) @db.Uuid
+  contractId     String   @map("contract_id") @db.Uuid
+  organisationId String   @map("organisation_id") @db.Uuid
+  versionNumber  Int      @map("version_number")
+  /// Full clause set at this version, so the agreement and the software can
+  /// never diverge (doc 16 §8).
+  content        Json
+  storageKey     String?  @map("storage_key")
+  contentHash    String   @map("content_hash")
+  changeSummary  String?  @map("change_summary")
+  isExecutedCopy Boolean  @default(false) @map("is_executed_copy")
+  signatories    Json?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy      String?  @map("created_by") @db.Uuid
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Restrict)
+
+  @@unique([contractId, versionNumber])
+  @@map("contract_version")
+  @@schema("plan")
+}
+
+enum ApprovalDecision {
+  PENDING
+  APPROVED
+  REJECTED
+  DELEGATED
+
+  @@schema("plan")
+}
+
+/// Generic approval record, reused by proposals, contracts, capex and
+/// adjustments. Segregation of duties is checked at the action level
+/// (doc 18 §9), not merely by role design.
+model Approval {
+  id             String           @id @default(uuid()) @db.Uuid
+  organisationId String           @map("organisation_id") @db.Uuid
+  facilityId     String?          @map("facility_id") @db.Uuid
+  entityType     String           @map("entity_type")
+  entityId       String           @map("entity_id") @db.Uuid
+  proposalId     String?          @map("proposal_id") @db.Uuid
+  contractId     String?          @map("contract_id") @db.Uuid
+  sequence       Int              @default(1)
+  approverUserId String?          @map("approver_user_id") @db.Uuid
+  approverRole   String?          @map("approver_role")
+  decision       ApprovalDecision @default(PENDING)
+  /// Mandatory for a rejection or an override.
+  reason         String?
+  decidedAt      DateTime?        @map("decided_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+
+  proposal Proposal? @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  contract Contract? @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([entityType, entityId])
+  @@index([organisationId, decision])
+  @@map("approval")
+  @@schema("plan")
+}

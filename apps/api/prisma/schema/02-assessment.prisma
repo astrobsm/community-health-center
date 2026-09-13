@@ -1,0 +1,528 @@
+// =============================================================================
+// ASSESS — field assessment, evidence, findings, and the immutable baseline
+//
+// This is where the product's claim begins: a real-world observation becomes a
+// digital record with evidence attached, and that record becomes the reference
+// point against which everything afterwards is measured.
+// =============================================================================
+
+/// A reusable assessment instrument. Versioned, because a response must always
+/// be interpretable against the exact template version used to capture it.
+model AssessmentTemplate {
+  id              String  @id @default(uuid()) @db.Uuid
+  organisationId  String? @map("organisation_id") @db.Uuid
+  code            String  @unique
+  name            String
+  description     String?
+  isSystemManaged Boolean @default(false) @map("is_system_managed")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+
+  versions AssessmentTemplateVersion[]
+
+  @@map("assessment_template")
+  @@schema("assess")
+}
+
+enum TemplateStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+
+  @@schema("assess")
+}
+
+model AssessmentTemplateVersion {
+  id            String         @id @default(uuid()) @db.Uuid
+  templateId    String         @map("template_id") @db.Uuid
+  versionNumber Int            @map("version_number")
+  status        TemplateStatus @default(DRAFT)
+  publishedAt   DateTime?      @map("published_at") @db.Timestamptz(6)
+  publishedBy   String?        @map("published_by") @db.Uuid
+  changeNote    String?        @map("change_note")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  template    AssessmentTemplate   @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  sections    AssessmentSection[]
+  assessments FacilityAssessment[]
+
+  @@unique([templateId, versionNumber])
+  @@map("assessment_template_version")
+  @@schema("assess")
+}
+
+/// The seventeen sections of spec §15 are seeded rows here, not code.
+model AssessmentSection {
+  id                String  @id @default(uuid()) @db.Uuid
+  templateVersionId String  @map("template_version_id") @db.Uuid
+  code              String
+  name              String
+  description       String?
+  sequence          Int
+  /// Contribution of this section to the facility condition index (spec §17).
+  weight            Decimal @default(1) @db.Decimal(8, 4)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  templateVersion AssessmentTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Cascade)
+  items           AssessmentItem[]
+  scores          AssessmentScore[]
+
+  @@unique([templateVersionId, code])
+  @@index([templateVersionId, sequence])
+  @@map("assessment_section")
+  @@schema("assess")
+}
+
+enum ResponseType {
+  BOOLEAN
+  SCALE
+  NUMBER
+  TEXT
+  SELECT
+  MULTISELECT
+  DATE
+  CURRENCY
+
+  @@schema("assess")
+}
+
+/// One question. Every item supports the full set required by spec §15:
+/// answer, score, note, evidence, photograph, document, verification,
+/// priority, estimated cost, recommendation.
+model AssessmentItem {
+  id               String       @id @default(uuid()) @db.Uuid
+  sectionId        String       @map("section_id") @db.Uuid
+  code             String
+  question         String
+  helpText         String?      @map("help_text")
+  responseType     ResponseType @map("response_type")
+  /// Choices for SELECT / MULTISELECT, and scale bounds for SCALE.
+  options          Json?
+  unit             String?
+  sequence         Int
+  weight           Decimal      @default(1) @db.Decimal(8, 4)
+  isRequired       Boolean      @default(true) @map("is_required")
+  /// When true, a response without evidence cannot be submitted.
+  evidenceRequired Boolean      @default(false) @map("evidence_required")
+  /// Scoring rule: how an answer maps to 0..1. Configurable, not hard-coded.
+  scoringRule      Json?        @map("scoring_rule")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  section   AssessmentSection    @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  responses AssessmentResponse[]
+
+  @@unique([sectionId, code])
+  @@index([sectionId, sequence])
+  @@map("assessment_item")
+  @@schema("assess")
+}
+
+enum AssessmentType {
+  PRE_ASSESSMENT
+  DUE_DILIGENCE
+  FIELD
+  FOLLOW_UP
+  POST_INTERVENTION
+
+  @@schema("assess")
+}
+
+enum AssessmentStatus {
+  DRAFT
+  IN_PROGRESS
+  SUBMITTED
+  VERIFIED
+  SEALED
+
+  @@schema("assess")
+}
+
+model FacilityAssessment {
+  id                String           @id @default(uuid()) @db.Uuid
+  facilityId        String           @map("facility_id") @db.Uuid
+  organisationId    String           @map("organisation_id") @db.Uuid
+  templateVersionId String           @map("template_version_id") @db.Uuid
+  assessmentType    AssessmentType   @map("assessment_type")
+  status            AssessmentStatus @default(DRAFT)
+  title             String?
+  /// Derived from answered required items — never typed (spec §61).
+  completionPercent Decimal          @default(0) @map("completion_percent") @db.Decimal(5, 2)
+  startedAt         DateTime?        @map("started_at") @db.Timestamptz(6)
+  submittedAt       DateTime?        @map("submitted_at") @db.Timestamptz(6)
+  submittedBy       String?          @map("submitted_by") @db.Uuid
+  verifiedAt        DateTime?        @map("verified_at") @db.Timestamptz(6)
+  verifiedBy        String?          @map("verified_by") @db.Uuid
+  leadAssessorId    String?          @map("lead_assessor_id") @db.Uuid
+  notes             String?
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  updatedBy  String?    @map("updated_by") @db.Uuid
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  facility        Facility                  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  templateVersion AssessmentTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  responses       AssessmentResponse[]
+  scores          AssessmentScore[]
+  baseline        BaselineSnapshot?
+
+  @@index([organisationId, facilityId, assessmentType])
+  @@index([facilityId, status])
+  @@map("facility_assessment")
+  @@schema("assess")
+}
+
+/// One answer. Captured in the field, often offline.
+model AssessmentResponse {
+  id              String             @id @default(uuid()) @db.Uuid
+  assessmentId    String             @map("assessment_id") @db.Uuid
+  itemId          String             @map("item_id") @db.Uuid
+  organisationId  String             @map("organisation_id") @db.Uuid
+  facilityId      String             @map("facility_id") @db.Uuid
+  /// Typed shape depends on the item's responseType; validated by the shared
+  /// Zod schema at capture time, so a bad answer is rejected while the
+  /// assessor is still standing in front of the thing being assessed.
+  answer          Json?
+  score           Decimal?           @db.Decimal(8, 4)
+  note            String?
+  classification  DataClassification @default(REPORTED)
+  isVerified      Boolean            @default(false) @map("is_verified")
+  verifiedBy      String?            @map("verified_by") @db.Uuid
+  verifiedAt      DateTime?          @map("verified_at") @db.Timestamptz(6)
+  /// Supersedes a previous answer. The original row is retained.
+  amendsId        String?            @map("amends_id") @db.Uuid
+  amendmentReason String?            @map("amendment_reason")
+
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy       String?    @map("created_by") @db.Uuid
+  updatedBy       String?    @map("updated_by") @db.Uuid
+  version         Int        @default(1)
+  deviceId        String?    @map("device_id")
+  /// Device clock — retained as a hint only; the server stamps the
+  /// authoritative time (doc 10 §1).
+  deviceCreatedAt DateTime?  @map("device_created_at") @db.Timestamptz(6)
+  syncStatus      SyncStatus @default(SYNCED) @map("sync_status")
+
+  assessment FacilityAssessment   @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  item       AssessmentItem       @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  amends     AssessmentResponse?  @relation("ResponseAmendment", fields: [amendsId], references: [id], onDelete: SetNull)
+  amendedBy  AssessmentResponse[] @relation("ResponseAmendment")
+  findings   AssessmentFinding[]
+  evidence   AssessmentEvidence[]
+
+  @@index([assessmentId, itemId])
+  @@index([facilityId])
+  @@map("assessment_response")
+  @@schema("assess")
+}
+
+/// A problem, observed. The origin of every intervention the system will later
+/// fund, procure, implement and verify.
+model AssessmentFinding {
+  id                     String             @id @default(uuid()) @db.Uuid
+  responseId             String?            @map("response_id") @db.Uuid
+  assessmentId           String?            @map("assessment_id") @db.Uuid
+  organisationId         String             @map("organisation_id") @db.Uuid
+  facilityId             String             @map("facility_id") @db.Uuid
+  reference              String
+  title                  String
+  description            String?
+  severity               Severity           @default(MEDIUM)
+  /// Advisory: computed by the configurable formula in spec §18, then
+  /// optionally overridden by a human with a reason.
+  priorityClass          PriorityClass      @default(P3) @map("priority_class")
+  priorityScore          Decimal?           @map("priority_score") @db.Decimal(8, 4)
+  priorityInputs         Json?              @map("priority_inputs")
+  priorityOverrideReason String?            @map("priority_override_reason")
+  estimatedCostMinor     BigInt?            @map("estimated_cost_minor")
+  currency               String             @default("NGN") @db.Char(3)
+  costClassification     DataClassification @default(ESTIMATED) @map("cost_classification")
+  recommendationText     String?            @map("recommendation_text")
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  updatedBy  String?    @map("updated_by") @db.Uuid
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  response AssessmentResponse? @relation(fields: [responseId], references: [id], onDelete: SetNull)
+  evidence FindingEvidence[]
+  needs    Need[]
+
+  @@unique([facilityId, reference])
+  @@index([organisationId, facilityId, priorityClass])
+  @@map("assessment_finding")
+  @@schema("assess")
+}
+
+enum EvidenceSource {
+  PHOTOGRAPH
+  DOCUMENT
+  SCANNED_DOCUMENT
+  INTERVIEW
+  FINANCIAL_RECORD
+  SYSTEM_RECORD
+  OBSERVATION
+
+  @@schema("assess")
+}
+
+enum MediaStatus {
+  PENDING_UPLOAD
+  UPLOADING
+  AVAILABLE
+  FAILED
+
+  @@schema("assess")
+}
+
+/// Evidence is never discarded — not on conflict, not on supersession.
+/// It is the thing that makes a claim about the facility checkable.
+model Evidence {
+  id               String             @id @default(uuid()) @db.Uuid
+  organisationId   String             @map("organisation_id") @db.Uuid
+  facilityId       String             @map("facility_id") @db.Uuid
+  reference        String
+  source           EvidenceSource
+  description      String?
+  capturedOn       DateTime?          @map("captured_on") @db.Timestamptz(6)
+  capturedBy       String?            @map("captured_by") @db.Uuid
+  verifiedBy       String?            @map("verified_by") @db.Uuid
+  verifiedAt       DateTime?          @map("verified_at") @db.Timestamptz(6)
+  verificationNote String?            @map("verification_note")
+  classification   DataClassification @default(VERIFIED)
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  photograph      Photograph?
+  documentFile    EvidenceDocument?
+  assessmentLinks AssessmentEvidence[]
+  findingLinks    FindingEvidence[]
+  projectLinks    ProjectEvidence[]
+
+  @@unique([facilityId, reference])
+  @@index([organisationId, facilityId, source])
+  @@map("evidence")
+  @@schema("assess")
+}
+
+enum EvidenceStage {
+  BEFORE
+  DURING
+  AFTER
+  BASELINE
+  ROUTINE
+
+  @@schema("assess")
+}
+
+model Photograph {
+  id             String        @id @default(uuid()) @db.Uuid
+  evidenceId     String        @unique @map("evidence_id") @db.Uuid
+  organisationId String        @map("organisation_id") @db.Uuid
+  facilityId     String        @map("facility_id") @db.Uuid
+  /// Object-storage key. Random, never derived from user input (doc 18 §4).
+  storageKey     String        @map("storage_key")
+  contentType    String        @default("image/webp") @map("content_type")
+  sizeBytes      Int?          @map("size_bytes")
+  width          Int?
+  height         Int?
+  /// SHA-256 of the bytes — detects duplicate uploads and proves the file
+  /// referenced by a report is the file that was captured.
+  contentHash    String?       @map("content_hash")
+  capturedAt     DateTime?     @map("captured_at") @db.Timestamptz(6)
+  /// Attached only with explicit consent (doc 09 §5).
+  latitude       Decimal?      @db.Decimal(10, 7)
+  longitude      Decimal?      @db.Decimal(10, 7)
+  caption        String?
+  category       String?
+  stage          EvidenceStage @default(BASELINE)
+  /// Pairs a BEFORE photograph with its AFTER counterpart for side-by-side
+  /// rendering in reports (spec §14).
+  pairedWithId   String?       @map("paired_with_id") @db.Uuid
+  mediaStatus    MediaStatus   @default(PENDING_UPLOAD) @map("media_status")
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  evidence   Evidence     @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  pairedWith Photograph?  @relation("BeforeAfterPair", fields: [pairedWithId], references: [id], onDelete: SetNull)
+  pairedBy   Photograph[] @relation("BeforeAfterPair")
+
+  @@index([facilityId, stage])
+  @@map("photograph")
+  @@schema("assess")
+}
+
+model EvidenceDocument {
+  id             String      @id @default(uuid()) @db.Uuid
+  evidenceId     String      @unique @map("evidence_id") @db.Uuid
+  organisationId String      @map("organisation_id") @db.Uuid
+  facilityId     String      @map("facility_id") @db.Uuid
+  storageKey     String      @map("storage_key")
+  fileName       String      @map("file_name")
+  contentType    String      @map("content_type")
+  sizeBytes      Int?        @map("size_bytes")
+  contentHash    String?     @map("content_hash")
+  documentType   String?     @map("document_type")
+  /// Text extracted by OCR, for search. Never treated as authoritative.
+  ocrText        String?     @map("ocr_text")
+  mediaStatus    MediaStatus @default(PENDING_UPLOAD) @map("media_status")
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  evidence Evidence @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId, documentType])
+  @@map("evidence_document")
+  @@schema("assess")
+}
+
+model AssessmentEvidence {
+  id         String   @id @default(uuid()) @db.Uuid
+  responseId String   @map("response_id") @db.Uuid
+  evidenceId String   @map("evidence_id") @db.Uuid
+  linkedAt   DateTime @default(now()) @map("linked_at") @db.Timestamptz(6)
+  linkedBy   String?  @map("linked_by") @db.Uuid
+
+  response AssessmentResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  evidence Evidence           @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+
+  @@unique([responseId, evidenceId])
+  @@map("assessment_evidence")
+  @@schema("assess")
+}
+
+model FindingEvidence {
+  id         String   @id @default(uuid()) @db.Uuid
+  findingId  String   @map("finding_id") @db.Uuid
+  evidenceId String   @map("evidence_id") @db.Uuid
+  linkedAt   DateTime @default(now()) @map("linked_at") @db.Timestamptz(6)
+  linkedBy   String?  @map("linked_by") @db.Uuid
+
+  finding  AssessmentFinding @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  evidence Evidence          @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+
+  @@unique([findingId, evidenceId])
+  @@map("finding_evidence")
+  @@schema("assess")
+}
+
+/// Facility condition index, per domain (spec §17).
+/// The underlying scores are stored, not only the headline — so a reader can
+/// see what produced the number.
+model AssessmentScore {
+  id                String   @id @default(uuid()) @db.Uuid
+  assessmentId      String   @map("assessment_id") @db.Uuid
+  sectionId         String?  @map("section_id") @db.Uuid
+  organisationId    String   @map("organisation_id") @db.Uuid
+  facilityId        String   @map("facility_id") @db.Uuid
+  domainCode        String   @map("domain_code")
+  rawScore          Decimal  @map("raw_score") @db.Decimal(10, 4)
+  maxScore          Decimal  @map("max_score") @db.Decimal(10, 4)
+  weight            Decimal  @db.Decimal(8, 4)
+  normalisedScore   Decimal  @map("normalised_score") @db.Decimal(5, 4)
+  /// Items excluded because they were not applicable — excluded, not scored
+  /// zero, which would silently understate readiness.
+  excludedItemCount Int      @default(0) @map("excluded_item_count")
+  computedAt        DateTime @default(now()) @map("computed_at") @db.Timestamptz(6)
+
+  assessment FacilityAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  section    AssessmentSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+
+  @@unique([assessmentId, domainCode])
+  @@index([facilityId, domainCode])
+  @@map("assessment_score")
+  @@schema("assess")
+}
+
+// -----------------------------------------------------------------------------
+// BASELINE — immutable. Enforced by a database trigger, not by convention.
+// -----------------------------------------------------------------------------
+
+/// Day 0. Sealed once and never altered; a later assessment creates a new
+/// snapshot with the next sequence number (spec §12).
+model BaselineSnapshot {
+  id             String   @id @default(uuid()) @db.Uuid
+  facilityId     String   @map("facility_id") @db.Uuid
+  organisationId String   @map("organisation_id") @db.Uuid
+  assessmentId   String?  @unique @map("assessment_id") @db.Uuid
+  /// 1 = the original Day 0 baseline.
+  sequence       Int
+  label          String
+  asOfDate       DateTime @map("as_of_date") @db.Date
+  sealedAt       DateTime @default(now()) @map("sealed_at") @db.Timestamptz(6)
+  sealedBy       String?  @map("sealed_by") @db.Uuid
+  /// SHA-256 over the canonical serialisation of every metric in this
+  /// snapshot. Tamper evidence (doc 11 §2).
+  contentHash    String   @map("content_hash")
+  notes          String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  facility       Facility            @relation(fields: [facilityId], references: [id], onDelete: Restrict)
+  assessment     FacilityAssessment? @relation(fields: [assessmentId], references: [id], onDelete: SetNull)
+  metrics        BaselineMetric[]
+  kpiAssignments KpiAssignment[]
+
+  @@unique([facilityId, sequence])
+  @@index([organisationId, facilityId])
+  @@map("baseline_snapshot")
+  @@schema("assess")
+}
+
+/// A frozen measurement. Current values are NEVER read from this table —
+/// they are always recomputed from transactions, which is what makes baseline
+/// and current structurally incapable of being conflated (doc 22 §3).
+model BaselineMetric {
+  id              String             @id @default(uuid()) @db.Uuid
+  snapshotId      String             @map("snapshot_id") @db.Uuid
+  organisationId  String             @map("organisation_id") @db.Uuid
+  facilityId      String             @map("facility_id") @db.Uuid
+  metricCode      String             @map("metric_code")
+  metricName      String             @map("metric_name")
+  domainCode      String?            @map("domain_code")
+  numericValue    Decimal?           @map("numeric_value") @db.Decimal(18, 6)
+  textValue       String?            @map("text_value")
+  unit            String?
+  classification  DataClassification
+  /// Where this number came from: an assessment response id, an interview, a
+  /// register count. Without this, a baseline is just an assertion.
+  sourceReference String?            @map("source_reference")
+  evidenceCount   Int                @default(0) @map("evidence_count")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  snapshot BaselineSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+
+  @@unique([snapshotId, metricCode])
+  @@index([facilityId, metricCode])
+  @@map("baseline_metric")
+  @@schema("assess")
+}

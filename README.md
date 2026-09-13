@@ -134,7 +134,30 @@ npm run db:migrate         # prisma migrate dev
 npm run db:studio          # Prisma Studio
 npm run db:erd             # regenerate the ERD from the live schema
 npm run infra:up|down      # docker compose
+
+# Release 0 acceptance gate — needs Docker, no other setup:
+# spins up a throwaway PostgreSQL 16, applies every migration to an empty
+# database, loads fixtures, and asserts that each database invariant refuses
+# what it must.
+npm run db:test-migrate --workspace @chc/api
 ```
+
+### What the acceptance gate proves
+
+The guarantees this product rests on live in the database, not in application code, so they hold
+even when the ORM is bypassed. `db:test-migrate` asserts all 28 of them against a real PostgreSQL:
+
+| Area | Asserted |
+|---|---|
+| Double-entry | An unbalanced entry cannot commit; a line cannot be both debit and credit |
+| Append-only | `journal_line`, `journal_entry`, `stock_transaction`, `attendance`, `audit_log` refuse UPDATE/DELETE |
+| Corrections | An entry can be marked `REVERSED` with a reason, but never edited |
+| Periods | Posting into a closed period is refused |
+| Stock | The batch cache equals the ledger sum; stock cannot go negative; an adjustment without a reason and approver is refused |
+| Baseline | A sealed baseline metric cannot be edited or deleted |
+| Clinical | BMI and EDD are computed by the database; impossible vitals are rejected |
+| Staffing | Overlapping primary postings are refused |
+| Tenancy | Another tenant sees zero rows; with no scope set, nothing is visible (fails closed) |
 
 ---
 

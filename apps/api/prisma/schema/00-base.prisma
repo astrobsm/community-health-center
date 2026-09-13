@@ -1,0 +1,155 @@
+// =============================================================================
+// BASE — generator, datasource, and enumerations shared across every context
+//
+// See docs/architecture/03-database-architecture.md for the conventions every
+// model in this schema follows.
+//
+// Conventions (enforced by review and by migration tests):
+//   - id           uuid, generated client-side so offline records have their
+//                  permanent identity before they ever reach the server
+//   - organisationId / facilityId  on every tenant-scoped model
+//   - createdAt / updatedAt / createdBy / updatedBy
+//   - version      optimistic concurrency + sync conflict detection
+//   - money        BigInt minor units (kobo) + explicit currency  (ADR 0003)
+//   - enums        only for closed, code-meaningful sets. Business-configurable
+//                  lists (services, tariffs, cadres, KPIs, assessment questions)
+//                  are reference TABLES, never enums.  (spec §89)
+// =============================================================================
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["core", "assess", "plan", "exec", "clinical", "supply", "fin", "people", "qual", "audit"]
+}
+
+// -----------------------------------------------------------------------------
+// Data classification — the non-fabrication rule, spec §82
+//
+// Every quantitative value in the system carries one of these. Aggregates take
+// the WEAKEST classification of their inputs. An ASSUMPTION never becomes a FACT.
+// -----------------------------------------------------------------------------
+enum DataClassification {
+  ACTUAL // produced by a system transaction
+  VERIFIED // observed and confirmed by a named verifier, with evidence
+  REPORTED // stated by a third party, not independently verified
+  ESTIMATED // derived by documented calculation from incomplete data
+  ASSUMPTION // an input chosen by a modeller
+  PROJECTED // output of a financial or statistical model
+  AI_GENERATED // produced by the AI layer
+
+  @@schema("core")
+}
+
+// -----------------------------------------------------------------------------
+// Synchronisation — doc 10
+// -----------------------------------------------------------------------------
+enum SyncStatus {
+  LOCAL_ONLY
+  PENDING
+  SYNCED
+  CONFLICT
+
+  @@schema("core")
+}
+
+enum ConflictType {
+  CONCURRENT_EDIT
+  STALE_UPDATE
+  DELETED_REMOTELY
+  BUSINESS_RULE
+  SEALED_ENTITY
+  DUPLICATE_CANDIDATE
+
+  @@schema("audit")
+}
+
+enum ConflictResolution {
+  KEEP_BOTH
+  KEEP_LOCAL
+  KEEP_SERVER
+  MERGED
+  REJECTED
+  PENDING
+
+  @@schema("audit")
+}
+
+// -----------------------------------------------------------------------------
+// Approval — used by capex, procurement, documents, contracts, adjustments
+// -----------------------------------------------------------------------------
+enum ApprovalStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  WITHDRAWN
+
+  @@schema("core")
+}
+
+// -----------------------------------------------------------------------------
+// Priority classes — spec §18
+// -----------------------------------------------------------------------------
+enum PriorityClass {
+  P1 // Critical — before opening
+  P2 // High — first 100 days
+  P3 // Development — within 12 months
+  P4 // Expansion — long term
+
+  @@schema("plan")
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+
+  @@schema("core")
+}
+
+// -----------------------------------------------------------------------------
+// Facility lifecycle — doc 00 §4. Forward-only; every move writes a transition
+// row with a reason. History is never rewritten.
+// -----------------------------------------------------------------------------
+enum FacilityLifecycleStage {
+  PRE_ASSESSMENT
+  DUE_DILIGENCE
+  FIELD_ASSESSMENT
+  BASELINE_ESTABLISHED
+  PLANNING
+  PROPOSAL
+  GOVERNMENT_REVIEW
+  AGREEMENT
+  IMPLEMENTATION
+  COMMISSIONING
+  LIVE_OPERATIONS
+  CONTINUOUS_IMPROVEMENT
+  SUSPENDED
+  EXITED
+
+  @@schema("core")
+}
+
+enum RecordStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+
+  @@schema("core")
+}
+
+enum Sex {
+  MALE
+  FEMALE
+  OTHER
+  UNKNOWN
+
+  @@schema("clinical")
+}

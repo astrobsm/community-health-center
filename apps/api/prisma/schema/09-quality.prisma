@@ -1,0 +1,600 @@
+// =============================================================================
+// QUAL — KPIs, quality, risk, compliance, documents, AI insights
+//
+// The measurement layer. Nothing here is ever hand-typed: a KPI result names
+// the SQL that produced it and the inputs it used.
+// =============================================================================
+
+enum KpiDirection {
+  HIGHER_BETTER
+  LOWER_BETTER
+  TARGET_RANGE
+
+  @@schema("qual")
+}
+
+/// Every KPI carries name, definition, unit, source, direction (spec §38).
+///
+/// `sourceQueryId` is the version-controlled SQL identity of the metric. A KPI
+/// without one cannot be computed — which is precisely how "dashboards must
+/// calculate from the authoritative data" is enforced rather than requested.
+model Kpi {
+  id              String       @id @default(uuid()) @db.Uuid
+  organisationId  String?      @map("organisation_id") @db.Uuid
+  code            String       @unique
+  name            String
+  definition      String
+  unit            String?
+  domainCode      String?      @map("domain_code")
+  direction       KpiDirection @default(HIGHER_BETTER)
+  sourceQueryId   String       @map("source_query_id")
+  /// Default aggregation period: DAILY | WEEKLY | MONTHLY | QUARTERLY | ANNUAL.
+  defaultPeriod   String       @default("MONTHLY") @map("default_period")
+  isSystemManaged Boolean      @default(false) @map("is_system_managed")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  assignments KpiAssignment[]
+
+  @@index([domainCode])
+  @@map("kpi")
+  @@schema("qual")
+}
+
+/// Binds a KPI to a facility with its baseline and target.
+///
+/// `baselineMetricId` is what makes today comparable to Day 0 — and because
+/// baseline comes from a sealed snapshot while current is recomputed from
+/// transactions, the two can never be conflated (doc 22 §3).
+model KpiAssignment {
+  id                 String       @id @default(uuid()) @db.Uuid
+  kpiId              String       @map("kpi_id") @db.Uuid
+  facilityId         String       @map("facility_id") @db.Uuid
+  organisationId     String       @map("organisation_id") @db.Uuid
+  baselineSnapshotId String?      @map("baseline_snapshot_id") @db.Uuid
+  baselineMetricId   String?      @map("baseline_metric_id") @db.Uuid
+  baselineValue      Decimal?     @map("baseline_value") @db.Decimal(18, 6)
+  targetValue        Decimal?     @map("target_value") @db.Decimal(18, 6)
+  targetDate         DateTime?    @map("target_date") @db.Date
+  ownerUserId        String?      @map("owner_user_id") @db.Uuid
+  amberThreshold     Decimal?     @map("amber_threshold") @db.Decimal(6, 4)
+  redThreshold       Decimal?     @map("red_threshold") @db.Decimal(6, 4)
+  status             RecordStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  kpi              Kpi               @relation(fields: [kpiId], references: [id], onDelete: Cascade)
+  facility         Facility          @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  baselineSnapshot BaselineSnapshot? @relation(fields: [baselineSnapshotId], references: [id], onDelete: SetNull)
+  results          KpiResult[]
+
+  @@unique([kpiId, facilityId])
+  @@index([organisationId, facilityId])
+  @@map("kpi_assignment")
+  @@schema("qual")
+}
+
+enum RagStatus {
+  GREEN
+  AMBER
+  RED
+  NOT_ASSESSED
+
+  @@schema("qual")
+}
+
+/// Computed, never typed. `inputs` records the provenance of the computation
+/// so a disputed figure can be re-derived months later.
+model KpiResult {
+  id                 String             @id @default(uuid()) @db.Uuid
+  kpiAssignmentId    String             @map("kpi_assignment_id") @db.Uuid
+  organisationId     String             @map("organisation_id") @db.Uuid
+  facilityId         String             @map("facility_id") @db.Uuid
+  periodStart        DateTime           @map("period_start") @db.Date
+  periodEnd          DateTime           @map("period_end") @db.Date
+  value              Decimal?           @db.Decimal(18, 6)
+  targetValue        Decimal?           @map("target_value") @db.Decimal(18, 6)
+  baselineValue      Decimal?           @map("baseline_value") @db.Decimal(18, 6)
+  varianceToTarget   Decimal?           @map("variance_to_target") @db.Decimal(18, 6)
+  changeFromBaseline Decimal?           @map("change_from_baseline") @db.Decimal(18, 6)
+  status             RagStatus          @default(NOT_ASSESSED)
+  classification     DataClassification @default(ACTUAL)
+  /// Denominator, so a rate computed from three observations is not presented
+  /// with the same confidence as one computed from three thousand.
+  sampleSize         Int?               @map("sample_size")
+  /// True when the value is withheld because the denominator is below the
+  /// small-cell threshold (doc 08 §5).
+  isSuppressed       Boolean            @default(false) @map("is_suppressed")
+  suppressionReason  String?            @map("suppression_reason")
+  inputs             Json?
+  computedAt         DateTime           @default(now()) @map("computed_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  kpiAssignment KpiAssignment @relation(fields: [kpiAssignmentId], references: [id], onDelete: Cascade)
+
+  @@unique([kpiAssignmentId, periodStart, periodEnd])
+  @@index([facilityId, periodEnd])
+  @@map("kpi_result")
+  @@schema("qual")
+}
+
+enum RiskStatus {
+  OPEN
+  MITIGATING
+  CLOSED
+  ACCEPTED
+
+  @@schema("qual")
+}
+
+model Risk {
+  id             String     @id @default(uuid()) @db.Uuid
+  organisationId String     @map("organisation_id") @db.Uuid
+  facilityId     String     @map("facility_id") @db.Uuid
+  projectId      String?    @map("project_id") @db.Uuid
+  partnershipId  String?    @map("partnership_id") @db.Uuid
+  reference      String
+  title          String
+  description    String?
+  category       String?
+  likelihood     Int
+  impact         Int
+  /// likelihood x impact, stored so the register can be sorted and audited.
+  riskScore      Int        @map("risk_score")
+  mitigation     String?
+  contingency    String?
+  ownerUserId    String?    @map("owner_user_id") @db.Uuid
+  status         RiskStatus @default(OPEN)
+  reviewDate     DateTime?  @map("review_date") @db.Date
+  closedAt       DateTime?  @map("closed_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  project CapitalProject? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@unique([organisationId, reference])
+  @@index([facilityId, status, riskScore])
+  @@map("risk")
+  @@schema("qual")
+}
+
+enum IncidentStatus {
+  REPORTED
+  UNDER_INVESTIGATION
+  ACTION_TAKEN
+  CLOSED
+
+  @@schema("qual")
+}
+
+model Incident {
+  id                String         @id @default(uuid()) @db.Uuid
+  organisationId    String         @map("organisation_id") @db.Uuid
+  facilityId        String         @map("facility_id") @db.Uuid
+  reference         String
+  incidentType      String         @map("incident_type")
+  description       String
+  severity          Severity       @default(MEDIUM)
+  occurredAt        DateTime       @map("occurred_at") @db.Timestamptz(6)
+  reportedBy        String?        @map("reported_by") @db.Uuid
+  reportedAt        DateTime       @default(now()) @map("reported_at") @db.Timestamptz(6)
+  patientAffected   Boolean        @default(false) @map("patient_affected")
+  /// Deliberately NOT a patient foreign key by default: incident reporting
+  /// must not be discouraged by identity exposure. Linked only when clinically
+  /// necessary and permissioned.
+  linkedEncounterId String?        @map("linked_encounter_id") @db.Uuid
+  immediateAction   String?        @map("immediate_action")
+  rootCause         String?        @map("root_cause")
+  status            IncidentStatus @default(REPORTED)
+  closedAt          DateTime?      @map("closed_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  actions CorrectiveAction[]
+
+  @@unique([organisationId, reference])
+  @@index([facilityId, status, occurredAt])
+  @@map("incident")
+  @@schema("qual")
+}
+
+enum ComplaintStatus {
+  RECEIVED
+  ACKNOWLEDGED
+  INVESTIGATING
+  RESOLVED
+  ESCALATED
+  CLOSED
+
+  @@schema("qual")
+}
+
+model Complaint {
+  id                 String          @id @default(uuid()) @db.Uuid
+  organisationId     String          @map("organisation_id") @db.Uuid
+  facilityId         String          @map("facility_id") @db.Uuid
+  reference          String
+  source             String
+  subject            String
+  description        String
+  /// Anonymous complaints are accepted — insisting on identity suppresses the
+  /// reports that matter most.
+  complainantName    String?         @map("complainant_name")
+  complainantContact String?         @map("complainant_contact")
+  isAnonymous        Boolean         @default(false) @map("is_anonymous")
+  receivedAt         DateTime        @default(now()) @map("received_at") @db.Timestamptz(6)
+  status             ComplaintStatus @default(RECEIVED)
+  assignedTo         String?         @map("assigned_to") @db.Uuid
+  resolution         String?
+  resolvedAt         DateTime?       @map("resolved_at") @db.Timestamptz(6)
+  satisfactionRating Int?            @map("satisfaction_rating")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  actions ComplaintAction[]
+
+  @@unique([organisationId, reference])
+  @@index([facilityId, status, receivedAt])
+  @@map("complaint")
+  @@schema("qual")
+}
+
+model ComplaintAction {
+  id             String   @id @default(uuid()) @db.Uuid
+  complaintId    String   @map("complaint_id") @db.Uuid
+  organisationId String   @map("organisation_id") @db.Uuid
+  description    String
+  takenBy        String?  @map("taken_by") @db.Uuid
+  takenAt        DateTime @default(now()) @map("taken_at") @db.Timestamptz(6)
+  outcome        String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  complaint Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+
+  @@index([complaintId])
+  @@map("complaint_action")
+  @@schema("qual")
+}
+
+enum QiStatus {
+  IDENTIFIED
+  ANALYSING
+  INTERVENING
+  MEASURING
+  REVIEWED
+  CLOSED
+
+  @@schema("qual")
+}
+
+/// Problem -> root cause -> intervention -> measurement -> review (spec §39).
+///
+/// `measurementKpiId` forces the cycle to close against a real measured
+/// indicator rather than an assertion that things improved.
+model QualityImprovement {
+  id                String    @id @default(uuid()) @db.Uuid
+  organisationId    String    @map("organisation_id") @db.Uuid
+  facilityId        String    @map("facility_id") @db.Uuid
+  reference         String
+  title             String
+  problemStatement  String    @map("problem_statement")
+  rootCauseAnalysis String?   @map("root_cause_analysis")
+  intervention      String?
+  measurementKpiId  String?   @map("measurement_kpi_id") @db.Uuid
+  baselineValue     Decimal?  @map("baseline_value") @db.Decimal(18, 6)
+  targetValue       Decimal?  @map("target_value") @db.Decimal(18, 6)
+  currentValue      Decimal?  @map("current_value") @db.Decimal(18, 6)
+  status            QiStatus  @default(IDENTIFIED)
+  ownerUserId       String?   @map("owner_user_id") @db.Uuid
+  startedOn         DateTime? @map("started_on") @db.Date
+  reviewDate        DateTime? @map("review_date") @db.Date
+  reviewOutcome     String?   @map("review_outcome")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  actions CorrectiveAction[]
+
+  @@unique([organisationId, reference])
+  @@index([facilityId, status])
+  @@map("quality_improvement")
+  @@schema("qual")
+}
+
+enum ActionStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  OVERDUE
+  CANCELLED
+
+  @@schema("qual")
+}
+
+model CorrectiveAction {
+  id                   String       @id @default(uuid()) @db.Uuid
+  organisationId       String       @map("organisation_id") @db.Uuid
+  facilityId           String       @map("facility_id") @db.Uuid
+  incidentId           String?      @map("incident_id") @db.Uuid
+  qualityImprovementId String?      @map("quality_improvement_id") @db.Uuid
+  description          String
+  ownerUserId          String?      @map("owner_user_id") @db.Uuid
+  dueDate              DateTime?    @map("due_date") @db.Date
+  status               ActionStatus @default(OPEN)
+  completedAt          DateTime?    @map("completed_at") @db.Timestamptz(6)
+  verificationNote     String?      @map("verification_note")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  incident           Incident?           @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  qualityImprovement QualityImprovement? @relation(fields: [qualityImprovementId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId, status, dueDate])
+  @@map("corrective_action")
+  @@schema("qual")
+}
+
+/// Configurable compliance register — spec §83.
+/// The system holds requirements and evidence; it does NOT assert legal
+/// conclusions.
+model ComplianceRequirement {
+  id                    String  @id @default(uuid()) @db.Uuid
+  organisationId        String? @map("organisation_id") @db.Uuid
+  code                  String  @unique
+  name                  String
+  description           String?
+  responsibleAuthority  String? @map("responsible_authority")
+  renewalIntervalMonths Int?    @map("renewal_interval_months")
+  isSystemManaged       Boolean @default(false) @map("is_system_managed")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  statuses ComplianceStatus[]
+
+  @@map("compliance_requirement")
+  @@schema("qual")
+}
+
+enum ComplianceState {
+  NOT_ASSESSED
+  COMPLIANT
+  PARTIAL
+  NON_COMPLIANT
+  NOT_APPLICABLE
+  EXPIRED
+
+  @@schema("qual")
+}
+
+model ComplianceStatus {
+  id                 String          @id @default(uuid()) @db.Uuid
+  requirementId      String          @map("requirement_id") @db.Uuid
+  organisationId     String          @map("organisation_id") @db.Uuid
+  facilityId         String          @map("facility_id") @db.Uuid
+  state              ComplianceState @default(NOT_ASSESSED)
+  evidenceNote       String?         @map("evidence_note")
+  evidenceStorageKey String?         @map("evidence_storage_key")
+  certificateNumber  String?         @map("certificate_number")
+  issuedOn           DateTime?       @map("issued_on") @db.Date
+  expiresOn          DateTime?       @map("expires_on") @db.Date
+  responsibleUserId  String?         @map("responsible_user_id") @db.Uuid
+  actionRequired     String?         @map("action_required")
+  assessedBy         String?         @map("assessed_by") @db.Uuid
+  assessedAt         DateTime?       @map("assessed_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  requirement ComplianceRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@unique([requirementId, facilityId])
+  @@index([facilityId, state, expiresOn])
+  @@map("compliance_status")
+  @@schema("qual")
+}
+
+// -----------------------------------------------------------------------------
+// Generated documents — doc 16
+// -----------------------------------------------------------------------------
+
+enum DocumentType {
+  PRE_ASSESSMENT_REPORT
+  DUE_DILIGENCE_REPORT
+  BASELINE_REPORT
+  NEEDS_ASSESSMENT
+  CAPITAL_PLAN
+  FIVE_YEAR_FINANCIAL_REPORT
+  BUSINESS_CASE
+  FULL_PROPOSAL
+  CHAIRMAN_BRIEF
+  LETTER
+  IMPLEMENTATION_PLAN
+  MOU
+  MANAGEMENT_AGREEMENT
+  COMMISSIONING_REPORT
+  MONTHLY_REPORT
+  QUARTERLY_REPORT
+  ANNUAL_REPORT
+
+  @@schema("qual")
+}
+
+enum DocumentStatus {
+  DRAFT
+  REVIEW
+  REVISION
+  PENDING_APPROVAL
+  APPROVED
+  SUPERSEDED
+
+  @@schema("qual")
+}
+
+model GeneratedDocument {
+  id             String         @id @default(uuid()) @db.Uuid
+  organisationId String         @map("organisation_id") @db.Uuid
+  facilityId     String         @map("facility_id") @db.Uuid
+  documentType   DocumentType   @map("document_type")
+  title          String
+  reference      String
+  status         DocumentStatus @default(DRAFT)
+  currentVersion Int            @default(1) @map("current_version")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  versions DocumentVersion[]
+
+  @@unique([organisationId, reference])
+  @@index([facilityId, documentType, status])
+  @@map("generated_document")
+  @@schema("qual")
+}
+
+/// IMMUTABLE once created. An approved version is never overwritten; a
+/// revision creates a new version and the old one becomes SUPERSEDED, still
+/// retrievable forever (spec §50).
+model DocumentVersion {
+  id                    String         @id @default(uuid()) @db.Uuid
+  documentId            String         @map("document_id") @db.Uuid
+  organisationId        String         @map("organisation_id") @db.Uuid
+  versionNumber         Int            @map("version_number")
+  status                DocumentStatus @default(DRAFT)
+  storageKey            String?        @map("storage_key")
+  contentType           String?        @map("content_type")
+  sizeBytes             Int?           @map("size_bytes")
+  contentHash           String?        @map("content_hash")
+  /// Everything needed to reproduce this document exactly: which queries ran,
+  /// over which period, against which model version (doc 16 §5).
+  provenance            Json
+  /// Counts by DataClassification, rendered in the document's appendix.
+  classificationSummary Json?          @map("classification_summary")
+  /// Completeness gates submission: a document below its type's threshold
+  /// cannot be sent for approval.
+  completenessPercent   Decimal?       @map("completeness_percent") @db.Decimal(5, 2)
+  missingDataNotes      Json?          @map("missing_data_notes")
+  reportingPeriodStart  DateTime?      @map("reporting_period_start") @db.Date
+  reportingPeriodEnd    DateTime?      @map("reporting_period_end") @db.Date
+  generatedBy           String?        @map("generated_by") @db.Uuid
+  generatedAt           DateTime       @default(now()) @map("generated_at") @db.Timestamptz(6)
+  approvedBy            String?        @map("approved_by") @db.Uuid
+  approvedAt            DateTime?      @map("approved_at") @db.Timestamptz(6)
+  supersededAt          DateTime?      @map("superseded_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  document GeneratedDocument @relation(fields: [documentId], references: [id], onDelete: Restrict)
+
+  @@unique([documentId, versionNumber])
+  @@map("document_version")
+  @@schema("qual")
+}
+
+/// Records the exact parameters of a report run, so a report can always be
+/// reproduced as it was issued.
+model ReportRun {
+  id                String    @id @default(uuid()) @db.Uuid
+  organisationId    String    @map("organisation_id") @db.Uuid
+  facilityId        String    @map("facility_id") @db.Uuid
+  reportCode        String    @map("report_code")
+  parameters        Json
+  periodStart       DateTime? @map("period_start") @db.Date
+  periodEnd         DateTime? @map("period_end") @db.Date
+  rowCounts         Json?     @map("row_counts")
+  durationMs        Int?      @map("duration_ms")
+  documentVersionId String?   @map("document_version_id") @db.Uuid
+  succeeded         Boolean   @default(true)
+  errorMessage      String?   @map("error_message")
+  runBy             String?   @map("run_by") @db.Uuid
+  runAt             DateTime  @default(now()) @map("run_at") @db.Timestamptz(6)
+
+  @@index([facilityId, reportCode, runAt])
+  @@map("report_run")
+  @@schema("qual")
+}
+
+// -----------------------------------------------------------------------------
+// AI insights — doc 17. Always labelled, always reproducible.
+// -----------------------------------------------------------------------------
+
+enum InsightType {
+  SUMMARY
+  ANOMALY
+  FORECAST_COMMENTARY
+  DRAFT
+  RECOMMENDATION
+  ANSWER
+  DATA_GAP
+
+  @@schema("qual")
+}
+
+enum ReviewOutcome {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EDITED
+
+  @@schema("qual")
+}
+
+model AiInsight {
+  id              String             @id @default(uuid()) @db.Uuid
+  organisationId  String             @map("organisation_id") @db.Uuid
+  facilityId      String?            @map("facility_id") @db.Uuid
+  insightType     InsightType        @map("insight_type")
+  subjectType     String?            @map("subject_type")
+  subjectId       String?            @map("subject_id") @db.Uuid
+  content         String
+  /// Never anything but AI_GENERATED. Present as a column so the same
+  /// serialisation rules apply to AI output as to every other value.
+  classification  DataClassification @default(AI_GENERATED)
+  modelId         String             @map("model_id")
+  modelVersion    String?            @map("model_version")
+  promptHash      String             @map("prompt_hash")
+  /// Exactly which named queries grounded this answer, and a hash of the
+  /// result set it saw — so a disputed statement can be re-examined.
+  contextQueryIds String[]           @map("context_query_ids")
+  contextHash     String             @map("context_hash")
+  /// Null unless statistically derived. An LLM's self-reported confidence is
+  /// not a measurement and is never stored here.
+  confidence      Decimal?           @db.Decimal(5, 4)
+  tokenUsage      Json?              @map("token_usage")
+  generatedAt     DateTime           @default(now()) @map("generated_at") @db.Timestamptz(6)
+  generatedBy     String?            @map("generated_by") @db.Uuid
+  reviewedBy      String?            @map("reviewed_by") @db.Uuid
+  reviewedAt      DateTime?          @map("reviewed_at") @db.Timestamptz(6)
+  reviewOutcome   ReviewOutcome      @default(PENDING) @map("review_outcome")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([organisationId, facilityId, insightType, generatedAt])
+  @@index([subjectType, subjectId])
+  @@map("ai_insight")
+  @@schema("qual")
+}

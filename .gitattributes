@@ -1,0 +1,17 @@
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.woff binary
+*.woff2 binary
+
+package-lock.json linguist-generated=true -diff
+*.generated.ts linguist-generated=true -diff
+docs/architecture/generated/** linguist-generated=true

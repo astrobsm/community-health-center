@@ -97,13 +97,17 @@ rather than auto-closed.
 triage {
   systolic_bp, diastolic_bp, pulse, temperature_c, respiratory_rate,
   spo2, weight_kg, height_cm,
-  bmi numeric GENERATED ALWAYS AS (weight_kg / ((height_cm/100)^2)) STORED,
+  bmi,                          -- computed by trigger; never written by the application
   muac_cm, pain_score,
   triage_category: RED | ORANGE | YELLOW | GREEN
 }
 ```
 
-- **BMI is a generated column.** It cannot disagree with the height and weight that produced it.
+- **BMI is computed by the database**, in a `BEFORE INSERT OR UPDATE` trigger on `weight_kg` and
+  `height_cm`. It cannot disagree with the values beside it, and no application code can set it.
+  (A `GENERATED ALWAYS` column would give the same guarantee but reads as schema drift to the ORM
+  on every migration, so the trigger is the pragmatic equivalent — verified by
+  `scripts/verify-invariants.sh`.)
 - Physiologically impossible values are rejected (temperature 12 °C); implausible-but-possible
   values are accepted with a confirmation prompt (temperature 41.5 °C) — because a system that
   refuses to record a genuine emergency is worse than one that asks twice.

@@ -1,0 +1,1244 @@
+// =============================================================================
+// CLINICAL — the EMR. The clinical truth.
+//
+// Two rules govern this whole schema:
+//   1. Nothing is ever silently overwritten. Clinical records amend; the
+//      original always survives and stays readable (spec §43).
+//   2. The encounter is the hinge. Clinical activity attaches to it, and so
+//      does every charge — which is what makes "revenue traces to care
+//      delivered" true by construction (doc 13 §1).
+// =============================================================================
+
+enum PatientStatus {
+  ACTIVE
+  INACTIVE
+  DECEASED
+  MERGED
+
+  @@schema("clinical")
+}
+
+model Patient {
+  id                   String        @id @default(uuid()) @db.Uuid
+  facilityId           String        @map("facility_id") @db.Uuid
+  organisationId       String        @map("organisation_id") @db.Uuid
+  communityId          String?       @map("community_id") @db.Uuid
+  /// Facility-scoped, human-readable, printed on the card. The UUID is
+  /// internal and never shown (doc 13 §2).
+  mrn                  String
+  givenName            String        @map("given_name")
+  familyName           String        @map("family_name")
+  otherNames           String?       @map("other_names")
+  dateOfBirth          DateTime?     @map("date_of_birth") @db.Date
+  /// True when only an age was given — common where birth dates are not
+  /// recorded. Keeps an estimate from masquerading as a fact.
+  dateOfBirthEstimated Boolean       @default(false) @map("date_of_birth_estimated")
+  sex                  Sex           @default(UNKNOWN)
+  maritalStatus        String?       @map("marital_status")
+  occupation           String?
+  addressLine          String?       @map("address_line")
+  /// Encrypted at field level (doc 18 §3).
+  ninEncrypted         String?       @map("nin_encrypted")
+  status               PatientStatus @default(ACTIVE)
+  /// Promoted to patient level and surfaced on every prescribing screen —
+  /// burying an allergy inside a note from 2024 is a safety failure.
+  allergySummary       String?       @map("allergy_summary")
+  bloodGroup           String?       @map("blood_group")
+  deceasedDate         DateTime?     @map("deceased_date") @db.Date
+  /// Set when this record was merged into a survivor. Never deleted.
+  mergedIntoId         String?       @map("merged_into_id") @db.Uuid
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  updatedBy  String?    @map("updated_by") @db.Uuid
+  deletedAt  DateTime?  @map("deleted_at") @db.Timestamptz(6)
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  facility           Facility            @relation(fields: [facilityId], references: [id], onDelete: Restrict)
+  community          Community?          @relation(fields: [communityId], references: [id], onDelete: SetNull)
+  mergedInto         Patient?            @relation("PatientMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
+  mergedFrom         Patient[]           @relation("PatientMerge")
+  identifiers        PatientIdentifier[]
+  contacts           PatientContact[]
+  consents           PatientConsent[]
+  encounters         Encounter[]
+  invoices           Invoice[]
+  appointments       Appointment[]
+  chronicConditions  ChronicCondition[]
+  maternityRecords   MaternityRecord[]
+  immunisations      Immunisation[]
+  growthMeasurements GrowthMeasurement[]
+  surveys            PatientSurvey[]
+
+  @@unique([facilityId, mrn])
+  @@index([organisationId, facilityId])
+  @@index([familyName, givenName])
+  @@map("patient")
+  @@schema("clinical")
+}
+
+enum IdentifierType {
+  FACILITY_MRN
+  NIN
+  NHIS
+  HMO
+  PHONE
+  VOTER_ID
+  OTHER
+
+  @@schema("clinical")
+}
+
+model PatientIdentifier {
+  id             String         @id @default(uuid()) @db.Uuid
+  patientId      String         @map("patient_id") @db.Uuid
+  organisationId String         @map("organisation_id") @db.Uuid
+  facilityId     String         @map("facility_id") @db.Uuid
+  identifierType IdentifierType @map("identifier_type")
+  /// Encrypted for NIN and similar highly identifying values.
+  value          String
+  issuer         String?
+  isPrimary      Boolean        @default(false) @map("is_primary")
+  verifiedAt     DateTime?      @map("verified_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, identifierType])
+  @@index([facilityId, identifierType, value])
+  @@map("patient_identifier")
+  @@schema("clinical")
+}
+
+model PatientContact {
+  id             String  @id @default(uuid()) @db.Uuid
+  patientId      String  @map("patient_id") @db.Uuid
+  organisationId String  @map("organisation_id") @db.Uuid
+  contactType    String  @map("contact_type")
+  name           String?
+  relationship   String?
+  phone          String?
+  address        String?
+  isNextOfKin    Boolean @default(false) @map("is_next_of_kin")
+  isPrimary      Boolean @default(false) @map("is_primary")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@map("patient_contact")
+  @@schema("clinical")
+}
+
+enum ConsentPurpose {
+  TREATMENT
+  DATA_STORAGE
+  SMS_CONTACT
+  RESEARCH_AGGREGATE
+  PHOTOGRAPH
+  GOVERNMENT_AGGREGATE_REPORTING
+
+  @@schema("clinical")
+}
+
+/// Purpose-scoped, versioned, withdrawable (doc 13 §3).
+///
+/// `privacyNoticeVersion` records which text the patient actually agreed to.
+/// When the notice changes, prior consents stay valid against what was shown.
+model PatientConsent {
+  id                   String         @id @default(uuid()) @db.Uuid
+  patientId            String         @map("patient_id") @db.Uuid
+  organisationId       String         @map("organisation_id") @db.Uuid
+  facilityId           String         @map("facility_id") @db.Uuid
+  purpose              ConsentPurpose
+  granted              Boolean
+  grantedAt            DateTime       @default(now()) @map("granted_at") @db.Timestamptz(6)
+  withdrawnAt          DateTime?      @map("withdrawn_at") @db.Timestamptz(6)
+  withdrawalReason     String?        @map("withdrawal_reason")
+  privacyNoticeVersion String?        @map("privacy_notice_version")
+  capturedBy           String?        @map("captured_by") @db.Uuid
+  /// Where the patient cannot consent personally.
+  proxyName            String?        @map("proxy_name")
+  proxyRelationship    String?        @map("proxy_relationship")
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, purpose])
+  @@map("patient_consent")
+  @@schema("clinical")
+}
+
+/// Registration never blocks care. A close match is recorded for review rather
+/// than refused (doc 13 §2).
+model DuplicateCandidate {
+  id             String    @id @default(uuid()) @db.Uuid
+  organisationId String    @map("organisation_id") @db.Uuid
+  facilityId     String    @map("facility_id") @db.Uuid
+  patientAId     String    @map("patient_a_id") @db.Uuid
+  patientBId     String    @map("patient_b_id") @db.Uuid
+  matchScore     Decimal   @map("match_score") @db.Decimal(5, 4)
+  matchReasons   Json?     @map("match_reasons")
+  reviewedBy     String?   @map("reviewed_by") @db.Uuid
+  reviewedAt     DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  outcome        String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([patientAId, patientBId])
+  @@index([facilityId, reviewedAt])
+  @@map("duplicate_candidate")
+  @@schema("clinical")
+}
+
+// -----------------------------------------------------------------------------
+// Encounters
+// -----------------------------------------------------------------------------
+
+enum EncounterType {
+  OPD
+  ANC
+  DELIVERY
+  POSTNATAL
+  IMMUNISATION
+  FAMILY_PLANNING
+  CHRONIC_FOLLOWUP
+  EMERGENCY
+  ADMISSION
+  OUTREACH
+  TELECONSULT
+
+  @@schema("clinical")
+}
+
+enum EncounterStatus {
+  OPEN
+  CLOSED
+  CANCELLED
+
+  @@schema("clinical")
+}
+
+enum TriageCategory {
+  RED
+  ORANGE
+  YELLOW
+  GREEN
+
+  @@schema("clinical")
+}
+
+model Encounter {
+  id                     String          @id @default(uuid()) @db.Uuid
+  patientId              String          @map("patient_id") @db.Uuid
+  facilityId             String          @map("facility_id") @db.Uuid
+  organisationId         String          @map("organisation_id") @db.Uuid
+  departmentId           String?         @map("department_id") @db.Uuid
+  encounterType          EncounterType   @default(OPD) @map("encounter_type")
+  status                 EncounterStatus @default(OPEN)
+  reference              String
+  chiefComplaint         String?         @map("chief_complaint")
+  startedAt              DateTime        @default(now()) @map("started_at") @db.Timestamptz(6)
+  endedAt                DateTime?       @map("ended_at") @db.Timestamptz(6)
+  attendingStaffId       String?         @map("attending_staff_id") @db.Uuid
+  triageCategory         TriageCategory? @map("triage_category")
+  disposition            String?
+  /// Required when an encounter is closed with no diagnosis — closing without
+  /// either is refused by the domain layer.
+  noDiagnosisReason      String?         @map("no_diagnosis_reason")
+  /// Set when the encounter was written up after the fact from a downtime
+  /// form; the clinical time is preserved in startedAt.
+  enteredRetrospectively Boolean         @default(false) @map("entered_retrospectively")
+
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy       String?    @map("created_by") @db.Uuid
+  updatedBy       String?    @map("updated_by") @db.Uuid
+  version         Int        @default(1)
+  deviceId        String?    @map("device_id")
+  deviceCreatedAt DateTime?  @map("device_created_at") @db.Timestamptz(6)
+  syncStatus      SyncStatus @default(SYNCED) @map("sync_status")
+
+  patient            Patient             @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  facility           Facility            @relation(fields: [facilityId], references: [id], onDelete: Restrict)
+  triages            Triage[]
+  clinicalNotes      ClinicalNote[]
+  nursingNotes       NursingNote[]
+  diagnoses          Diagnosis[]
+  procedures         Procedure[]
+  prescriptions      Prescription[]
+  labOrders          LabOrder[]
+  referrals          Referral[]
+  appointments       Appointment[]
+  charges            Charge[]
+  ancVisits          AncVisit[]
+  deliveryRecord     DeliveryRecord?
+  immunisations      Immunisation[]
+  growthMeasurements GrowthMeasurement[]
+
+  @@unique([facilityId, reference])
+  @@index([organisationId, facilityId, startedAt])
+  @@index([patientId, startedAt])
+  @@index([facilityId, status])
+  @@map("encounter")
+  @@schema("clinical")
+}
+
+/// Vitals. BMI is computed by a database trigger — it cannot disagree
+/// with the height and weight that produced it (doc 13 §5).
+model Triage {
+  id                  String          @id @default(uuid()) @db.Uuid
+  encounterId         String          @map("encounter_id") @db.Uuid
+  organisationId      String          @map("organisation_id") @db.Uuid
+  facilityId          String          @map("facility_id") @db.Uuid
+  systolicBp          Int?            @map("systolic_bp")
+  diastolicBp         Int?            @map("diastolic_bp")
+  pulse               Int?
+  temperatureC        Decimal?        @map("temperature_c") @db.Decimal(4, 1)
+  respiratoryRate     Int?            @map("respiratory_rate")
+  spo2                Int?
+  weightKg            Decimal?        @map("weight_kg") @db.Decimal(6, 2)
+  heightCm            Decimal?        @map("height_cm") @db.Decimal(6, 2)
+  /// Maintained by the database, never written by the application.
+  bmi                 Decimal?        @db.Decimal(6, 2)
+  muacCm              Decimal?        @map("muac_cm") @db.Decimal(5, 2)
+  painScore           Int?            @map("pain_score")
+  triageCategory      TriageCategory? @map("triage_category")
+  /// Recorded when a clinician confirmed an implausible-but-possible value —
+  /// refusing to record a genuine emergency would be worse than asking twice.
+  outOfRangeConfirmed Boolean         @default(false) @map("out_of_range_confirmed")
+  notes               String?
+  recordedBy          String?         @map("recorded_by") @db.Uuid
+  recordedAt          DateTime        @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  encounter Encounter @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+
+  @@index([encounterId, recordedAt])
+  @@index([facilityId, recordedAt])
+  @@map("triage")
+  @@schema("clinical")
+}
+
+enum NoteType {
+  CONSULTATION
+  PROGRESS
+  PROCEDURE
+  DISCHARGE
+  REFERRAL
+
+  @@schema("clinical")
+}
+
+enum ClinicalRecordStatus {
+  DRAFT
+  SIGNED
+  AMENDED
+
+  @@schema("clinical")
+}
+
+/// A signed note is NEVER modified. An amendment is a new row pointing at the
+/// previous one; the original becomes AMENDED and stays fully readable.
+/// A DRAFT may be edited freely by its author — a clinician typing mid-
+/// consultation is not making an amendment (doc 13 §6).
+model ClinicalNote {
+  id                           String               @id @default(uuid()) @db.Uuid
+  encounterId                  String               @map("encounter_id") @db.Uuid
+  organisationId               String               @map("organisation_id") @db.Uuid
+  facilityId                   String               @map("facility_id") @db.Uuid
+  noteType                     NoteType             @default(CONSULTATION) @map("note_type")
+  presentingComplaint          String?              @map("presenting_complaint")
+  historyOfPresentingComplaint String?              @map("history_of_presenting_complaint")
+  pastMedicalHistory           String?              @map("past_medical_history")
+  medicationHistory            String?              @map("medication_history")
+  allergies                    String?
+  familySocialHistory          String?              @map("family_social_history")
+  examinationGeneral           String?              @map("examination_general")
+  examinationSystems           Json?                @map("examination_systems")
+  assessment                   String?
+  differentialDiagnosis        String?              @map("differential_diagnosis")
+  plan                         String?
+  status                       ClinicalRecordStatus @default(DRAFT)
+  authorStaffId                String?              @map("author_staff_id") @db.Uuid
+  signedAt                     DateTime?            @map("signed_at") @db.Timestamptz(6)
+  amendsId                     String?              @map("amends_id") @db.Uuid
+  amendmentReason              String?              @map("amendment_reason")
+
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy       String?    @map("created_by") @db.Uuid
+  version         Int        @default(1)
+  deviceId        String?    @map("device_id")
+  deviceCreatedAt DateTime?  @map("device_created_at") @db.Timestamptz(6)
+  syncStatus      SyncStatus @default(SYNCED) @map("sync_status")
+
+  encounter Encounter      @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+  amends    ClinicalNote?  @relation("NoteAmendment", fields: [amendsId], references: [id], onDelete: SetNull)
+  amendedBy ClinicalNote[] @relation("NoteAmendment")
+
+  @@index([encounterId, status])
+  @@index([facilityId, createdAt])
+  @@map("clinical_note")
+  @@schema("clinical")
+}
+
+model NursingNote {
+  id              String               @id @default(uuid()) @db.Uuid
+  encounterId     String               @map("encounter_id") @db.Uuid
+  organisationId  String               @map("organisation_id") @db.Uuid
+  facilityId      String               @map("facility_id") @db.Uuid
+  observation     String
+  intervention    String?
+  response        String?
+  status          ClinicalRecordStatus @default(DRAFT)
+  authorStaffId   String?              @map("author_staff_id") @db.Uuid
+  signedAt        DateTime?            @map("signed_at") @db.Timestamptz(6)
+  amendsId        String?              @map("amends_id") @db.Uuid
+  amendmentReason String?              @map("amendment_reason")
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  encounter Encounter     @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+  amends    NursingNote?  @relation("NursingAmendment", fields: [amendsId], references: [id], onDelete: SetNull)
+  amendedBy NursingNote[] @relation("NursingAmendment")
+
+  @@index([encounterId])
+  @@map("nursing_note")
+  @@schema("clinical")
+}
+
+enum DiagnosisType {
+  PRIMARY
+  SECONDARY
+  DIFFERENTIAL
+  PROVISIONAL
+  CONFIRMED
+  RULED_OUT
+
+  @@schema("clinical")
+}
+
+/// A provisional diagnosis later confirmed or ruled out becomes an amendment
+/// chain, so the clinical reasoning is preserved — which is exactly what a
+/// later clinician needs (doc 13 §7).
+model Diagnosis {
+  id              String               @id @default(uuid()) @db.Uuid
+  encounterId     String               @map("encounter_id") @db.Uuid
+  organisationId  String               @map("organisation_id") @db.Uuid
+  facilityId      String               @map("facility_id") @db.Uuid
+  icd10Code       String?              @map("icd10_code")
+  /// What the clinician actually typed, including a local-language term.
+  localTerm       String?              @map("local_term")
+  description     String
+  diagnosisType   DiagnosisType        @default(PRIMARY) @map("diagnosis_type")
+  status          ClinicalRecordStatus @default(SIGNED)
+  diagnosedBy     String?              @map("diagnosed_by") @db.Uuid
+  diagnosedAt     DateTime             @default(now()) @map("diagnosed_at") @db.Timestamptz(6)
+  amendsId        String?              @map("amends_id") @db.Uuid
+  amendmentReason String?              @map("amendment_reason")
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  encounter Encounter   @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+  amends    Diagnosis?  @relation("DiagnosisAmendment", fields: [amendsId], references: [id], onDelete: SetNull)
+  amendedBy Diagnosis[] @relation("DiagnosisAmendment")
+
+  @@index([encounterId])
+  @@index([facilityId, icd10Code, diagnosedAt])
+  @@map("diagnosis")
+  @@schema("clinical")
+}
+
+model Procedure {
+  id                String   @id @default(uuid()) @db.Uuid
+  encounterId       String   @map("encounter_id") @db.Uuid
+  organisationId    String   @map("organisation_id") @db.Uuid
+  facilityId        String   @map("facility_id") @db.Uuid
+  serviceOfferingId String?  @map("service_offering_id") @db.Uuid
+  name              String
+  code              String?
+  indication        String?
+  findings          String?
+  performedBy       String?  @map("performed_by") @db.Uuid
+  assistedBy        String?  @map("assisted_by")
+  performedAt       DateTime @default(now()) @map("performed_at") @db.Timestamptz(6)
+  outcome           String?
+  complications     String?
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  encounter Encounter @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+
+  @@index([encounterId])
+  @@index([facilityId, performedAt])
+  @@map("procedure")
+  @@schema("clinical")
+}
+
+enum ReferralStatus {
+  INITIATED
+  ACCEPTED
+  COMPLETED
+  DECLINED
+  CANCELLED
+
+  @@schema("clinical")
+}
+
+model Referral {
+  id                   String         @id @default(uuid()) @db.Uuid
+  encounterId          String         @map("encounter_id") @db.Uuid
+  organisationId       String         @map("organisation_id") @db.Uuid
+  facilityId           String         @map("facility_id") @db.Uuid
+  referredToFacility   String         @map("referred_to_facility")
+  referredToDepartment String?        @map("referred_to_department")
+  reason               String
+  urgency              Severity       @default(MEDIUM)
+  status               ReferralStatus @default(INITIATED)
+  referredBy           String?        @map("referred_by") @db.Uuid
+  referredAt           DateTime       @default(now()) @map("referred_at") @db.Timestamptz(6)
+  /// Closing the loop matters clinically: an unreturned referral is a patient
+  /// who may never have arrived.
+  outcomeNote          String?        @map("outcome_note")
+  outcomeAt            DateTime?      @map("outcome_at") @db.Timestamptz(6)
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  encounter Encounter @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId, status, referredAt])
+  @@map("referral")
+  @@schema("clinical")
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  ATTENDED
+  MISSED
+  CANCELLED
+
+  @@schema("clinical")
+}
+
+model Appointment {
+  id             String            @id @default(uuid()) @db.Uuid
+  patientId      String            @map("patient_id") @db.Uuid
+  encounterId    String?           @map("encounter_id") @db.Uuid
+  organisationId String            @map("organisation_id") @db.Uuid
+  facilityId     String            @map("facility_id") @db.Uuid
+  scheduledFor   DateTime          @map("scheduled_for") @db.Timestamptz(6)
+  purpose        String?
+  status         AppointmentStatus @default(SCHEDULED)
+  reminderSentAt DateTime?         @map("reminder_sent_at") @db.Timestamptz(6)
+  attendedAt     DateTime?         @map("attended_at") @db.Timestamptz(6)
+  notes          String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  patient   Patient    @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  encounter Encounter? @relation(fields: [encounterId], references: [id], onDelete: SetNull)
+
+  @@index([facilityId, scheduledFor, status])
+  @@index([patientId, scheduledFor])
+  @@map("appointment")
+  @@schema("clinical")
+}
+
+// -----------------------------------------------------------------------------
+// Pharmacy — spec §30
+// -----------------------------------------------------------------------------
+
+model Medication {
+  id              String  @id @default(uuid()) @db.Uuid
+  organisationId  String? @map("organisation_id") @db.Uuid
+  inventoryItemId String? @unique @map("inventory_item_id") @db.Uuid
+  code            String  @unique
+  genericName     String  @map("generic_name")
+  brandName       String? @map("brand_name")
+  strength        String?
+  dosageForm      String? @map("dosage_form")
+  route           String?
+  atcCode         String? @map("atc_code")
+  isControlled    Boolean @default(false) @map("is_controlled")
+  /// Configurable interaction and caution table — clinical content is
+  /// reference data, never code.
+  cautions        Json?
+  isSystemManaged Boolean @default(false) @map("is_system_managed")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  inventoryItem     InventoryItem?     @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  prescriptionItems PrescriptionItem[]
+
+  @@index([genericName])
+  @@map("medication")
+  @@schema("clinical")
+}
+
+enum PrescriptionStatus {
+  DRAFT
+  ISSUED
+  VERIFIED
+  PARTIALLY_DISPENSED
+  DISPENSED
+  CANCELLED
+
+  @@schema("clinical")
+}
+
+model Prescription {
+  id                    String             @id @default(uuid()) @db.Uuid
+  encounterId           String             @map("encounter_id") @db.Uuid
+  organisationId        String             @map("organisation_id") @db.Uuid
+  facilityId            String             @map("facility_id") @db.Uuid
+  reference             String
+  status                PrescriptionStatus @default(DRAFT)
+  prescribedBy          String?            @map("prescribed_by") @db.Uuid
+  prescribedAt          DateTime           @default(now()) @map("prescribed_at") @db.Timestamptz(6)
+  /// A distinct, permissioned step from dispensing — preserving the
+  /// professional check even when one person holds both permissions.
+  verifiedBy            String?            @map("verified_by") @db.Uuid
+  verifiedAt            DateTime?          @map("verified_at") @db.Timestamptz(6)
+  /// Recorded when a prescriber proceeds past an allergy or interaction
+  /// warning. Clinicians keep judgement; the override becomes part of the
+  /// record (doc 13 §9).
+  warningOverrideReason String?            @map("warning_override_reason")
+  notes                 String?
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  encounter Encounter          @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+  items     PrescriptionItem[]
+
+  @@unique([facilityId, reference])
+  @@index([facilityId, status, prescribedAt])
+  @@map("prescription")
+  @@schema("clinical")
+}
+
+model PrescriptionItem {
+  id                 String  @id @default(uuid()) @db.Uuid
+  prescriptionId     String  @map("prescription_id") @db.Uuid
+  medicationId       String? @map("medication_id") @db.Uuid
+  organisationId     String  @map("organisation_id") @db.Uuid
+  facilityId         String  @map("facility_id") @db.Uuid
+  medicationName     String  @map("medication_name")
+  dose               String
+  frequency          String
+  route              String?
+  durationDays       Int?    @map("duration_days")
+  quantityPrescribed Decimal @map("quantity_prescribed") @db.Decimal(12, 3)
+  /// Partial dispensing is first-class: a patient who can afford four of ten
+  /// tablets gets four, and the data says so (doc 13 §9).
+  quantityDispensed  Decimal @default(0) @map("quantity_dispensed") @db.Decimal(12, 3)
+  instructions       String?
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version    Int        @default(1)
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  prescription Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  medication   Medication?  @relation(fields: [medicationId], references: [id], onDelete: SetNull)
+  dispensings  Dispensing[]
+
+  @@index([prescriptionId])
+  @@map("prescription_item")
+  @@schema("clinical")
+}
+
+enum StockCertainty {
+  ACTUAL
+  PROVISIONAL
+
+  @@schema("clinical")
+}
+
+/// One atomic transaction writes this row, a stock transaction, a charge, and
+/// the journal entries for revenue and cost of goods (doc 02 §5).
+model Dispensing {
+  id                 String         @id @default(uuid()) @db.Uuid
+  prescriptionItemId String         @map("prescription_item_id") @db.Uuid
+  inventoryBatchId   String?        @map("inventory_batch_id") @db.Uuid
+  organisationId     String         @map("organisation_id") @db.Uuid
+  facilityId         String         @map("facility_id") @db.Uuid
+  quantity           Decimal        @db.Decimal(12, 3)
+  unitPriceMinor     BigInt?        @map("unit_price_minor")
+  currency           String         @default("NGN") @db.Char(3)
+  dispensedBy        String?        @map("dispensed_by") @db.Uuid
+  dispensedAt        DateTime       @default(now()) @map("dispensed_at") @db.Timestamptz(6)
+  chargeId           String?        @map("charge_id") @db.Uuid
+  /// PROVISIONAL when dispensed offline: the device's FEFO choice is a
+  /// preference, and the server re-runs FEFO authoritatively at sync
+  /// (doc 09 §4).
+  stockCertainty     StockCertainty @default(ACTUAL) @map("stock_certainty")
+  /// Set when a pharmacist overrode the FEFO selection.
+  fefoOverrideReason String?        @map("fefo_override_reason")
+  isReturned         Boolean        @default(false) @map("is_returned")
+
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy       String?    @map("created_by") @db.Uuid
+  version         Int        @default(1)
+  deviceId        String?    @map("device_id")
+  deviceCreatedAt DateTime?  @map("device_created_at") @db.Timestamptz(6)
+  syncStatus      SyncStatus @default(SYNCED) @map("sync_status")
+
+  prescriptionItem PrescriptionItem @relation(fields: [prescriptionItemId], references: [id], onDelete: Restrict)
+  inventoryBatch   InventoryBatch?  @relation(fields: [inventoryBatchId], references: [id], onDelete: SetNull)
+  charge           Charge?          @relation(fields: [chargeId], references: [id], onDelete: SetNull)
+
+  @@index([facilityId, dispensedAt])
+  @@index([prescriptionItemId])
+  @@map("dispensing")
+  @@schema("clinical")
+}
+
+// -----------------------------------------------------------------------------
+// Laboratory — spec §29
+// -----------------------------------------------------------------------------
+
+model LabTest {
+  id               String  @id @default(uuid()) @db.Uuid
+  organisationId   String? @map("organisation_id") @db.Uuid
+  code             String  @unique
+  name             String
+  category         String?
+  specimenType     String? @map("specimen_type")
+  method           String?
+  unit             String?
+  /// Expected turnaround, for comparison against the measured value —
+  /// which is computed from timestamps, never entered.
+  targetTatMinutes Int?    @map("target_tat_minutes")
+  isSystemManaged  Boolean @default(false) @map("is_system_managed")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  referenceRanges LabReferenceRange[]
+  orderItems      LabOrderItem[]
+  results         LabResult[]
+  qualityControls LabQualityControl[]
+
+  @@index([category])
+  @@map("lab_test")
+  @@schema("clinical")
+}
+
+/// Age- and sex-specific. Applying an adult range to a neonate would reject
+/// valid observations, so ranges are data, not constants (doc 13 §5).
+model LabReferenceRange {
+  id           String   @id @default(uuid()) @db.Uuid
+  labTestId    String   @map("lab_test_id") @db.Uuid
+  sex          Sex?
+  ageMinMonths Int?     @map("age_min_months")
+  ageMaxMonths Int?     @map("age_max_months")
+  lowValue     Decimal? @map("low_value") @db.Decimal(18, 6)
+  highValue    Decimal? @map("high_value") @db.Decimal(18, 6)
+  criticalLow  Decimal? @map("critical_low") @db.Decimal(18, 6)
+  criticalHigh Decimal? @map("critical_high") @db.Decimal(18, 6)
+  unit         String?
+  textualRange String?  @map("textual_range")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  labTest LabTest @relation(fields: [labTestId], references: [id], onDelete: Cascade)
+
+  @@index([labTestId])
+  @@map("lab_reference_range")
+  @@schema("clinical")
+}
+
+enum LabOrderStatus {
+  ORDERED
+  COLLECTED
+  IN_PROCESS
+  RESULTED
+  VERIFIED
+  CANCELLED
+
+  @@schema("clinical")
+}
+
+model LabOrder {
+  id                 String         @id @default(uuid()) @db.Uuid
+  encounterId        String         @map("encounter_id") @db.Uuid
+  organisationId     String         @map("organisation_id") @db.Uuid
+  facilityId         String         @map("facility_id") @db.Uuid
+  reference          String
+  status             LabOrderStatus @default(ORDERED)
+  /// Required: an investigation without a clinical indication is a cost
+  /// without a reason.
+  clinicalIndication String?        @map("clinical_indication")
+  urgency            Severity       @default(MEDIUM)
+  orderedBy          String?        @map("ordered_by") @db.Uuid
+  orderedAt          DateTime       @default(now()) @map("ordered_at") @db.Timestamptz(6)
+  cancelledReason    String?        @map("cancelled_reason")
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  encounter Encounter      @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+  items     LabOrderItem[]
+
+  @@unique([facilityId, reference])
+  @@index([facilityId, status, orderedAt])
+  @@map("lab_order")
+  @@schema("clinical")
+}
+
+model LabOrderItem {
+  id             String         @id @default(uuid()) @db.Uuid
+  labOrderId     String         @map("lab_order_id") @db.Uuid
+  labTestId      String         @map("lab_test_id") @db.Uuid
+  organisationId String         @map("organisation_id") @db.Uuid
+  facilityId     String         @map("facility_id") @db.Uuid
+  status         LabOrderStatus @default(ORDERED)
+  chargeId       String?        @map("charge_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  labOrder LabOrder    @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
+  labTest  LabTest     @relation(fields: [labTestId], references: [id], onDelete: Restrict)
+  charge   Charge?     @relation(fields: [chargeId], references: [id], onDelete: SetNull)
+  samples  LabSample[]
+
+  @@index([labOrderId])
+  @@map("lab_order_item")
+  @@schema("clinical")
+}
+
+model LabSample {
+  id              String    @id @default(uuid()) @db.Uuid
+  labOrderItemId  String    @map("lab_order_item_id") @db.Uuid
+  organisationId  String    @map("organisation_id") @db.Uuid
+  facilityId      String    @map("facility_id") @db.Uuid
+  /// The laboratory's working identifier: facility-unique and sequential.
+  accessionNumber String    @map("accession_number")
+  sampleType      String    @map("sample_type")
+  container       String?
+  collectedBy     String?   @map("collected_by") @db.Uuid
+  collectedAt     DateTime? @map("collected_at") @db.Timestamptz(6)
+  receivedAt      DateTime? @map("received_at") @db.Timestamptz(6)
+  /// A rejected sample is a real event with a clinical consequence — the
+  /// patient must be re-bled — so it is recorded, not discarded.
+  rejectedAt      DateTime? @map("rejected_at") @db.Timestamptz(6)
+  rejectionReason String?   @map("rejection_reason")
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  labOrderItem LabOrderItem @relation(fields: [labOrderItemId], references: [id], onDelete: Cascade)
+  results      LabResult[]
+
+  @@unique([facilityId, accessionNumber])
+  @@index([labOrderItemId])
+  @@map("lab_sample")
+  @@schema("clinical")
+}
+
+enum ResultFlag {
+  NORMAL
+  LOW
+  HIGH
+  CRITICAL_LOW
+  CRITICAL_HIGH
+  ABNORMAL
+  INDETERMINATE
+
+  @@schema("clinical")
+}
+
+enum LabResultStatus {
+  PRELIMINARY
+  VERIFIED
+  AMENDED
+  CANCELLED
+
+  @@schema("clinical")
+}
+
+/// Only VERIFIED results are visible to clinicians. A corrected result is a
+/// new row; if the original was already acted upon, the amendment raises a
+/// high-priority notification (doc 13 §8).
+model LabResult {
+  id              String          @id @default(uuid()) @db.Uuid
+  sampleId        String          @map("sample_id") @db.Uuid
+  labTestId       String          @map("lab_test_id") @db.Uuid
+  organisationId  String          @map("organisation_id") @db.Uuid
+  facilityId      String          @map("facility_id") @db.Uuid
+  numericValue    Decimal?        @map("numeric_value") @db.Decimal(18, 6)
+  textValue       String?         @map("text_value")
+  unit            String?
+  /// Computed from the age/sex-specific reference range, not typed.
+  flag            ResultFlag?
+  status          LabResultStatus @default(PRELIMINARY)
+  resultedBy      String?         @map("resulted_by") @db.Uuid
+  resultedAt      DateTime?       @map("resulted_at") @db.Timestamptz(6)
+  verifiedBy      String?         @map("verified_by") @db.Uuid
+  verifiedAt      DateTime?       @map("verified_at") @db.Timestamptz(6)
+  /// Critical results escalate until someone acknowledges them.
+  acknowledgedBy  String?         @map("acknowledged_by") @db.Uuid
+  acknowledgedAt  DateTime?       @map("acknowledged_at") @db.Timestamptz(6)
+  amendsId        String?         @map("amends_id") @db.Uuid
+  amendmentReason String?         @map("amendment_reason")
+  comment         String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  sample    LabSample   @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+  labTest   LabTest     @relation(fields: [labTestId], references: [id], onDelete: Restrict)
+  amends    LabResult?  @relation("ResultAmendment", fields: [amendsId], references: [id], onDelete: SetNull)
+  amendedBy LabResult[] @relation("ResultAmendment")
+
+  @@index([sampleId])
+  @@index([facilityId, status, verifiedAt])
+  @@map("lab_result")
+  @@schema("clinical")
+}
+
+/// A failed QC blocks result release for that analyte until resolved.
+model LabQualityControl {
+  id                String    @id @default(uuid()) @db.Uuid
+  labTestId         String    @map("lab_test_id") @db.Uuid
+  organisationId    String    @map("organisation_id") @db.Uuid
+  facilityId        String    @map("facility_id") @db.Uuid
+  controlLevel      String    @map("control_level")
+  controlLot        String?   @map("control_lot")
+  expectedValue     Decimal?  @map("expected_value") @db.Decimal(18, 6)
+  observedValue     Decimal?  @map("observed_value") @db.Decimal(18, 6)
+  standardDeviation Decimal?  @map("standard_deviation") @db.Decimal(18, 6)
+  passed            Boolean
+  ruleViolated      String?   @map("rule_violated")
+  runAt             DateTime  @default(now()) @map("run_at") @db.Timestamptz(6)
+  runBy             String?   @map("run_by") @db.Uuid
+  correctiveAction  String?   @map("corrective_action")
+  resolvedAt        DateTime? @map("resolved_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version   Int      @default(1)
+
+  labTest LabTest @relation(fields: [labTestId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId, labTestId, runAt])
+  @@map("lab_quality_control")
+  @@schema("clinical")
+}
+
+// -----------------------------------------------------------------------------
+// Maternity, child health, chronic disease — spec §27 modules 6-8
+// -----------------------------------------------------------------------------
+
+model MaternityRecord {
+  id             String    @id @default(uuid()) @db.Uuid
+  patientId      String    @map("patient_id") @db.Uuid
+  organisationId String    @map("organisation_id") @db.Uuid
+  facilityId     String    @map("facility_id") @db.Uuid
+  gravida        Int?
+  para           Int?
+  lmp            DateTime? @db.Date
+  /// Derived from LMP by a database trigger — an EDD that disagrees with the LMP
+  /// it came from is a data-quality defect waiting to happen.
+  edd            DateTime? @db.Date
+  riskFactors    String?   @map("risk_factors")
+  bloodGroup     String?   @map("blood_group")
+  status         String?
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  version    Int        @default(1)
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  patient        Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  ancVisits      AncVisit[]
+  deliveryRecord DeliveryRecord?
+
+  @@index([patientId])
+  @@index([facilityId, edd])
+  @@map("maternity_record")
+  @@schema("clinical")
+}
+
+model AncVisit {
+  id                  String    @id @default(uuid()) @db.Uuid
+  maternityRecordId   String    @map("maternity_record_id") @db.Uuid
+  encounterId         String?   @map("encounter_id") @db.Uuid
+  organisationId      String    @map("organisation_id") @db.Uuid
+  facilityId          String    @map("facility_id") @db.Uuid
+  visitNumber         Int       @map("visit_number")
+  gestationalAgeWeeks Int?      @map("gestational_age_weeks")
+  fundalHeightCm      Decimal?  @map("fundal_height_cm") @db.Decimal(5, 1)
+  fetalHeartRate      Int?      @map("fetal_heart_rate")
+  presentation        String?
+  findings            String?
+  interventions       String?
+  nextVisitDate       DateTime? @map("next_visit_date") @db.Date
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  version    Int        @default(1)
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  maternityRecord MaternityRecord @relation(fields: [maternityRecordId], references: [id], onDelete: Cascade)
+  encounter       Encounter?      @relation(fields: [encounterId], references: [id], onDelete: SetNull)
+
+  @@unique([maternityRecordId, visitNumber])
+  @@map("anc_visit")
+  @@schema("clinical")
+}
+
+model DeliveryRecord {
+  id                String   @id @default(uuid()) @db.Uuid
+  maternityRecordId String   @unique @map("maternity_record_id") @db.Uuid
+  encounterId       String?  @unique @map("encounter_id") @db.Uuid
+  organisationId    String   @map("organisation_id") @db.Uuid
+  facilityId        String   @map("facility_id") @db.Uuid
+  deliveredAt       DateTime @map("delivered_at") @db.Timestamptz(6)
+  modeOfDelivery    String?  @map("mode_of_delivery")
+  outcome           String?
+  liveBirths        Int      @default(0) @map("live_births")
+  stillBirths       Int      @default(0) @map("still_births")
+  birthWeightGrams  Int?     @map("birth_weight_grams")
+  apgar1Min         Int?     @map("apgar1_min")
+  apgar5Min         Int?     @map("apgar5_min")
+  complications     String?
+  attendedBy        String?  @map("attended_by") @db.Uuid
+  /// Optional link to a newborn patient record created at delivery.
+  newbornPatientId  String?  @map("newborn_patient_id") @db.Uuid
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  version    Int        @default(1)
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  maternityRecord MaternityRecord @relation(fields: [maternityRecordId], references: [id], onDelete: Cascade)
+  encounter       Encounter?      @relation(fields: [encounterId], references: [id], onDelete: SetNull)
+
+  @@index([facilityId, deliveredAt])
+  @@map("delivery_record")
+  @@schema("clinical")
+}
+
+model Immunisation {
+  id             String    @id @default(uuid()) @db.Uuid
+  patientId      String    @map("patient_id") @db.Uuid
+  encounterId    String?   @map("encounter_id") @db.Uuid
+  organisationId String    @map("organisation_id") @db.Uuid
+  facilityId     String    @map("facility_id") @db.Uuid
+  vaccineCode    String    @map("vaccine_code")
+  vaccineName    String    @map("vaccine_name")
+  doseNumber     Int?      @map("dose_number")
+  /// Computed from date of birth against the configurable national schedule.
+  scheduledDate  DateTime? @map("scheduled_date") @db.Date
+  administeredAt DateTime? @map("administered_at") @db.Timestamptz(6)
+  batchNumber    String?   @map("batch_number")
+  site           String?
+  administeredBy String?   @map("administered_by") @db.Uuid
+  adverseEvent   String?   @map("adverse_event")
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  version    Int        @default(1)
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  patient   Patient    @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  encounter Encounter? @relation(fields: [encounterId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, vaccineCode])
+  @@index([facilityId, scheduledDate])
+  @@map("immunisation")
+  @@schema("clinical")
+}
+
+model GrowthMeasurement {
+  id                  String   @id @default(uuid()) @db.Uuid
+  patientId           String   @map("patient_id") @db.Uuid
+  encounterId         String?  @map("encounter_id") @db.Uuid
+  organisationId      String   @map("organisation_id") @db.Uuid
+  facilityId          String   @map("facility_id") @db.Uuid
+  measuredAt          DateTime @default(now()) @map("measured_at") @db.Timestamptz(6)
+  ageMonths           Int?     @map("age_months")
+  weightKg            Decimal? @map("weight_kg") @db.Decimal(6, 2)
+  heightCm            Decimal? @map("height_cm") @db.Decimal(6, 2)
+  muacCm              Decimal? @map("muac_cm") @db.Decimal(5, 2)
+  headCircumferenceCm Decimal? @map("head_circumference_cm") @db.Decimal(5, 2)
+  /// WHO z-scores are computed, never typed.
+  weightForAgeZ       Decimal? @map("weight_for_age_z") @db.Decimal(6, 3)
+  heightForAgeZ       Decimal? @map("height_for_age_z") @db.Decimal(6, 3)
+  weightForHeightZ    Decimal? @map("weight_for_height_z") @db.Decimal(6, 3)
+  nutritionStatus     String?  @map("nutrition_status")
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  version    Int        @default(1)
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  patient   Patient    @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  encounter Encounter? @relation(fields: [encounterId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, measuredAt])
+  @@map("growth_measurement")
+  @@schema("clinical")
+}
+
+enum ChronicConditionStatus {
+  ACTIVE
+  CONTROLLED
+  UNCONTROLLED
+  DEFAULTED
+  RESOLVED
+
+  @@schema("clinical")
+}
+
+/// Turns an EMR into continuity of care: a hypertensive patient who has not
+/// attended in four months appears on a follow-up queue (doc 13 §10).
+model ChronicCondition {
+  id                   String                 @id @default(uuid()) @db.Uuid
+  patientId            String                 @map("patient_id") @db.Uuid
+  organisationId       String                 @map("organisation_id") @db.Uuid
+  facilityId           String                 @map("facility_id") @db.Uuid
+  conditionName        String                 @map("condition_name")
+  icd10Code            String?                @map("icd10_code")
+  diagnosedOn          DateTime?              @map("diagnosed_on") @db.Date
+  status               ChronicConditionStatus @default(ACTIVE)
+  followupIntervalDays Int?                   @map("followup_interval_days")
+  nextFollowupDate     DateTime?              @map("next_followup_date") @db.Date
+  lastSeenAt           DateTime?              @map("last_seen_at") @db.Timestamptz(6)
+  adherenceNote        String?                @map("adherence_note")
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String?    @map("created_by") @db.Uuid
+  version    Int        @default(1)
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  patient   Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  followups ChronicFollowup[]
+
+  @@index([patientId])
+  @@index([facilityId, nextFollowupDate, status])
+  @@map("chronic_condition")
+  @@schema("clinical")
+}
+
+model ChronicFollowup {
+  id                 String   @id @default(uuid()) @db.Uuid
+  chronicConditionId String   @map("chronic_condition_id") @db.Uuid
+  encounterId        String?  @map("encounter_id") @db.Uuid
+  organisationId     String   @map("organisation_id") @db.Uuid
+  facilityId         String   @map("facility_id") @db.Uuid
+  occurredAt         DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  controlMeasure     String?  @map("control_measure")
+  measurementValue   Decimal? @map("measurement_value") @db.Decimal(18, 6)
+  adherenceReported  String?  @map("adherence_reported")
+  plan               String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+  version   Int      @default(1)
+
+  chronicCondition ChronicCondition @relation(fields: [chronicConditionId], references: [id], onDelete: Cascade)
+
+  @@index([chronicConditionId, occurredAt])
+  @@map("chronic_followup")
+  @@schema("clinical")
+}
+
+/// Patient experience — an input to performance, and deliberately not the
+/// same thing as patient volume (spec §25).
+model PatientSurvey {
+  id             String   @id @default(uuid()) @db.Uuid
+  patientId      String?  @map("patient_id") @db.Uuid
+  organisationId String   @map("organisation_id") @db.Uuid
+  facilityId     String   @map("facility_id") @db.Uuid
+  encounterId    String?  @map("encounter_id") @db.Uuid
+  surveyCode     String   @map("survey_code")
+  responses      Json
+  overallScore   Decimal? @map("overall_score") @db.Decimal(5, 2)
+  comment        String?
+  /// Surveys may be answered anonymously; that is usually when they are most
+  /// honest.
+  isAnonymous    Boolean  @default(true) @map("is_anonymous")
+  collectedAt    DateTime @default(now()) @map("collected_at") @db.Timestamptz(6)
+
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  version    Int        @default(1)
+  deviceId   String?    @map("device_id")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+
+  patient Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
+
+  @@index([facilityId, collectedAt])
+  @@map("patient_survey")
+  @@schema("clinical")
+}

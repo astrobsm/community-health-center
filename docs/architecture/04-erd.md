@@ -363,7 +363,7 @@ erDiagram
         int spo2
         numeric weight_kg
         numeric height_cm
-        numeric bmi "GENERATED"
+        numeric bmi "trigger-computed"
         int pain_score
     }
     LAB_RESULT {

@@ -1,0 +1,269 @@
+// =============================================================================
+// AUDIT — the institutional memory, plus sync, outbox, notifications, backups
+//
+// When the partnership is reviewed in year four and someone asks "who approved
+// this, and on what evidence?", the answer must exist and must be trustworthy.
+// =============================================================================
+
+enum AuditActorType {
+  USER
+  SYSTEM
+  INTEGRATION
+  AI
+
+  @@schema("audit")
+}
+
+enum AuditOutcome {
+  SUCCESS
+  FAILURE
+  DENIED
+
+  @@schema("audit")
+}
+
+enum AuditSeverity {
+  INFO
+  NOTICE
+  WARNING
+  CRITICAL
+
+  @@schema("audit")
+}
+
+/// IMMUTABLE. Database rules forbid UPDATE and DELETE, and the application
+/// role holds no grant for either.
+///
+/// Rows are hash-chained per facility per day: row_hash =
+/// SHA-256(prev_hash || canonical_json(row)). A nightly job verifies the chain
+/// and publishes the terminal hash externally.
+///
+/// This does not make tampering impossible for a database superuser — no
+/// application-level design can. It makes tampering DETECTABLE, which is the
+/// achievable goal, and the limitation is stated rather than glossed over
+/// (doc 11 §2).
+model AuditLog {
+  id             String         @id @default(uuid()) @db.Uuid
+  occurredAt     DateTime       @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  organisationId String         @map("organisation_id") @db.Uuid
+  facilityId     String?        @map("facility_id") @db.Uuid
+  actorUserId    String?        @map("actor_user_id") @db.Uuid
+  actorType      AuditActorType @default(USER) @map("actor_type")
+  /// The effective user during an impersonated session; both are recorded.
+  onBehalfOf     String?        @map("on_behalf_of") @db.Uuid
+  action         String
+  entityType     String         @map("entity_type")
+  entityId       String?        @map("entity_id") @db.Uuid
+  oldValue       Json?          @map("old_value")
+  newValue       Json?          @map("new_value")
+  changedFields  String[]       @map("changed_fields")
+  /// Mandatory for corrections, overrides, break-glass, waivers, adjustments,
+  /// reversals, and any change to an approved financial model.
+  reason         String?
+  outcome        AuditOutcome   @default(SUCCESS)
+  severity       AuditSeverity  @default(INFO)
+  deviceId       String?        @map("device_id")
+  ipAddress      String?        @map("ip_address") @db.Inet
+  userAgent      String?        @map("user_agent")
+  sessionId      String?        @map("session_id") @db.Uuid
+  /// Ties this row to the structured application log.
+  traceId        String         @map("trace_id")
+  requestId      String?        @map("request_id")
+  prevHash       Bytes?         @map("prev_hash")
+  rowHash        Bytes          @map("row_hash")
+
+  @@index([organisationId, facilityId, occurredAt])
+  @@index([actorUserId, occurredAt])
+  @@index([entityType, entityId])
+  @@index([action, occurredAt])
+  @@index([severity, occurredAt])
+  @@map("audit_log")
+  @@schema("audit")
+}
+
+/// One row per sync batch. Feeds the admin dashboard required by spec §86:
+/// last successful sync per device, outstanding queue depth, conflict rate by
+/// entity, and devices silent for more than 7 days.
+model SyncEvent {
+  id                String   @id @default(uuid()) @db.Uuid
+  organisationId    String   @map("organisation_id") @db.Uuid
+  facilityId        String?  @map("facility_id") @db.Uuid
+  userId            String?  @map("user_id") @db.Uuid
+  deviceId          String   @map("device_id")
+  direction         String
+  recordsAttempted  Int      @default(0) @map("records_attempted")
+  recordsApplied    Int      @default(0) @map("records_applied")
+  recordsConflicted Int      @default(0) @map("records_conflicted")
+  recordsRejected   Int      @default(0) @map("records_rejected")
+  bytesTransferred  Int?     @map("bytes_transferred")
+  durationMs        Int?     @map("duration_ms")
+  /// Client-reported network conditions, useful for distinguishing a broken
+  /// sync from a bad signal.
+  networkInfo       Json?    @map("network_info")
+  cursorBefore      String?  @map("cursor_before")
+  cursorAfter       String?  @map("cursor_after")
+  succeeded         Boolean  @default(true)
+  errorMessage      String?  @map("error_message")
+  occurredAt        DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+
+  conflicts SyncConflict[]
+
+  @@index([deviceId, occurredAt])
+  @@index([organisationId, facilityId, occurredAt])
+  @@map("sync_event")
+  @@schema("audit")
+}
+
+/// Nothing is ever discarded. Even a rejected record is retained in full, so a
+/// supervisor can see precisely what the device attempted and why it failed
+/// (doc 10 §5).
+model SyncConflict {
+  id               String             @id @default(uuid()) @db.Uuid
+  syncEventId      String?            @map("sync_event_id") @db.Uuid
+  organisationId   String             @map("organisation_id") @db.Uuid
+  facilityId       String?            @map("facility_id") @db.Uuid
+  deviceId         String             @map("device_id")
+  userId           String?            @map("user_id") @db.Uuid
+  entityType       String             @map("entity_type")
+  entityId         String             @map("entity_id") @db.Uuid
+  conflictType     ConflictType       @map("conflict_type")
+  baseVersion      Int?               @map("base_version")
+  serverVersion    Int?               @map("server_version")
+  localPayload     Json               @map("local_payload")
+  serverPayload    Json?              @map("server_payload")
+  resolution       ConflictResolution @default(PENDING)
+  resolutionReason String?            @map("resolution_reason")
+  resolvedBy       String?            @map("resolved_by") @db.Uuid
+  resolvedAt       DateTime?          @map("resolved_at") @db.Timestamptz(6)
+  detectedAt       DateTime           @default(now()) @map("detected_at") @db.Timestamptz(6)
+
+  syncEvent SyncEvent? @relation(fields: [syncEventId], references: [id], onDelete: SetNull)
+
+  @@index([organisationId, facilityId, resolution])
+  @@index([entityType, entityId])
+  @@map("sync_conflict")
+  @@schema("audit")
+}
+
+enum OutboxStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  DEAD
+
+  @@schema("audit")
+}
+
+/// Transactional outbox.
+///
+/// Written in the SAME transaction as the business data, then dispatched by a
+/// worker. This is what guarantees we never send a critical-result SMS for a
+/// result that was rolled back (doc 02 §4).
+model OutboxMessage {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  facilityId     String?      @map("facility_id") @db.Uuid
+  topic          String
+  payload        Json
+  status         OutboxStatus @default(PENDING)
+  attempts       Int          @default(0)
+  lastError      String?      @map("last_error")
+  availableAt    DateTime     @default(now()) @map("available_at") @db.Timestamptz(6)
+  sentAt         DateTime?    @map("sent_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([status, availableAt])
+  @@index([topic, status])
+  @@map("outbox_message")
+  @@schema("audit")
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+
+  @@schema("audit")
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+
+  @@schema("audit")
+}
+
+model Notification {
+  id              String              @id @default(uuid()) @db.Uuid
+  organisationId  String              @map("organisation_id") @db.Uuid
+  facilityId      String?             @map("facility_id") @db.Uuid
+  userId          String?             @map("user_id") @db.Uuid
+  channel         NotificationChannel @default(IN_APP)
+  category        String
+  title           String
+  body            String
+  severity        Severity            @default(LOW)
+  /// Deep link to the record that caused this notification.
+  entityType      String?             @map("entity_type")
+  entityId        String?             @map("entity_id") @db.Uuid
+  status          NotificationStatus  @default(PENDING)
+  /// Critical clinical notifications escalate until acknowledged; this is the
+  /// count of escalations so far (doc 13 §8).
+  escalationCount Int                 @default(0) @map("escalation_count")
+  sentAt          DateTime?           @map("sent_at") @db.Timestamptz(6)
+  readAt          DateTime?           @map("read_at") @db.Timestamptz(6)
+  acknowledgedAt  DateTime?           @map("acknowledged_at") @db.Timestamptz(6)
+  failureReason   String?             @map("failure_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user AppUser? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, createdAt])
+  @@index([organisationId, facilityId, category, createdAt])
+  @@map("notification")
+  @@schema("audit")
+}
+
+enum BackupType {
+  WAL_ARCHIVE
+  LOGICAL_DUMP
+  BASE_BACKUP
+  OFFSITE_COPY
+
+  @@schema("audit")
+}
+
+/// A backup that has never been restored is a hypothesis.
+///
+/// Nightly automated restore-and-verify writes a row here, and the admin UI
+/// surfaces the latest of each type. If nothing has verified in 48 hours it
+/// becomes a CRITICAL alert visible to the facility manager, not only to an
+/// engineer (doc 19 §4).
+model BackupVerification {
+  id                     String     @id @default(uuid()) @db.Uuid
+  organisationId         String?    @map("organisation_id") @db.Uuid
+  backupType             BackupType @map("backup_type")
+  backupRef              String     @map("backup_ref")
+  backupTakenAt          DateTime   @map("backup_taken_at") @db.Timestamptz(6)
+  sizeBytes              BigInt?    @map("size_bytes")
+  verifiedAt             DateTime?  @map("verified_at") @db.Timestamptz(6)
+  verificationDurationMs Int?       @map("verification_duration_ms")
+  /// Each assertion the verifier ran: schema version, row counts, ledger
+  /// balance, stock ledger integrity, audit chain.
+  checks                 Json?
+  succeeded              Boolean    @default(false)
+  errorMessage           String?    @map("error_message")
+  restorePointEarliest   DateTime?  @map("restore_point_earliest") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([backupType, backupTakenAt])
+  @@map("backup_verification")
+  @@schema("audit")
+}
