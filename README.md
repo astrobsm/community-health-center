@@ -120,6 +120,19 @@ npm run dev                   # API on :3000, web on :5173
 
 ## Commands
 
+### Running it locally
+
+```bash
+# One command: fresh PostgreSQL and Redis, migrations, reference data,
+# one organisation with one facility, and two users.
+bash apps/api/scripts/setup-local-demo.sh
+bash apps/api/scripts/run-local.sh
+
+# In another shell, exercise the whole chain against the running API:
+bash apps/api/scripts/smoke-auth.sh         # 24 checks
+bash apps/api/scripts/smoke-assessment.sh   # 39 checks
+```
+
 ```bash
 npm run dev                # API + web in watch mode
 npm run build              # build all workspaces
@@ -169,8 +182,8 @@ Twelve controlled releases, defined in
 | | Release | Status |
 |---|---|---|
 | 0 | Architecture, schema, security baseline | **complete** — 28 invariants verified against a real PostgreSQL |
-| 1 | Foundation — auth, org, facility, users, roles, audit | **server complete** — 24 checks verified end to end; **web client not started**, so Release 1 does not yet meet its own Definition of Done (criterion 7, responsive UI) |
-| 2 | Field assessment, evidence, baseline | |
+| 1 | Foundation — auth, org, facility, users, roles, audit | **server complete** — 24 checks verified end to end |
+| 2 | Field assessment, evidence, baseline | **server complete** — 39 checks verified end to end |
 | 3 | Planning — needs, CAPEX, risk, financial model | |
 | 4 | Partnership — revenue models, capital recovery | |
 | 5 | Documents — proposal, letters, MOU, reports | |
@@ -180,6 +193,11 @@ Twelve controlled releases, defined in
 | 9 | People and quality — HR, attendance, performance, KPI | |
 | 10 | Analytics — dashboards, comparisons, forecasting | |
 | 11 | AI — assistant, anomaly detection, predictive analytics | |
+
+**No web client exists yet.** Releases 1 and 2 are complete and verified on the server, but neither
+meets its own Definition of Done until the PWA lands (criterion 7, responsive UI; criterion 8,
+offline support). The API is built for it — client-generated ids, batched writes, idempotent
+evidence registration — but the field app itself is not written.
 
 A release ships only when it satisfies all nine Definition-of-Done criteria (migrations, validation,
 permissions, audit, tests, error handling, responsive UI, offline where required, documentation).

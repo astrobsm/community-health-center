@@ -28,9 +28,13 @@
     "db:test-migrate": "bash scripts/test-migrations.sh",
     "bootstrap:org": "tsx prisma/seed/bootstrap-organisation.ts",
     "start:local": "bash scripts/run-local.sh",
-    "smoke:auth": "bash scripts/smoke-auth.sh"
+    "smoke:auth": "bash scripts/smoke-auth.sh",
+    "create:user": "tsx prisma/seed/create-user.ts",
+    "smoke:assessment": "bash scripts/smoke-assessment.sh"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1131.0",
+    "@aws-sdk/s3-request-presigner": "^3.1131.0",
     "@chc/contracts": "*",
     "@fastify/helmet": "^13.0.0",
     "@nestjs/common": "^12.0.0",

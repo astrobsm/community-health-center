@@ -14,6 +14,7 @@ import { AuthService } from './modules/auth/auth.service';
 import { PasswordService } from './modules/auth/password.service';
 import { TokenService } from './modules/auth/token.service';
 import { MetaController } from './modules/meta/meta.controller';
+import { RevitalisationModule } from './modules/revitalisation.module';
 
 export const ENV = Symbol('ENV');
 
@@ -65,7 +66,7 @@ export class PlatformModule {}
 export class AuthModule {}
 
 @Module({
-  imports: [PlatformModule, AuthModule],
+  imports: [PlatformModule, AuthModule, RevitalisationModule],
   controllers: [MetaController],
   providers: [
     /**

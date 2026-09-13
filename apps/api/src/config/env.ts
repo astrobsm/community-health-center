@@ -54,6 +54,15 @@ export const envSchema = z
     RATE_LIMIT_WRITE_PER_MINUTE: z.coerce.number().int().positive().default(60),
     RATE_LIMIT_LOGIN_PER_15MIN: z.coerce.number().int().positive().default(5),
 
+    STORAGE_ENDPOINT: z.string().default('http://localhost:9000'),
+    STORAGE_REGION: z.string().default('us-east-1'),
+    STORAGE_ACCESS_KEY_ID: z.string().optional(),
+    STORAGE_SECRET_ACCESS_KEY: z.string().optional(),
+    STORAGE_BUCKET_EVIDENCE: z.string().default('chc-evidence'),
+    STORAGE_BUCKET_DOCUMENTS: z.string().default('chc-documents'),
+    STORAGE_FORCE_PATH_STYLE: booleanish.default(true),
+    STORAGE_PRESIGN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
+
     AI_ENABLED: booleanish.default(false),
 
     /**

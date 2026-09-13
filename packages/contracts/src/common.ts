@@ -15,6 +15,25 @@ export const SyncStatus = {
 } as const;
 export type SyncStatus = (typeof SyncStatus)[keyof typeof SyncStatus];
 
+/**
+ * Sync metadata as a CLIENT sends it when creating a record.
+ *
+ * `version` is deliberately absent: it is the server's concurrency token,
+ * assigned on write and incremented by a database trigger. Requiring a client
+ * to invent one would be asking it to guess, and would reject every
+ * first-time create from a field device.
+ *
+ * A client sends `version` only when UPDATING, as the baseVersion it edited
+ * against — see `syncMetadataSchema`.
+ */
+export const clientSyncMetadataSchema = z.object({
+  id: uuidSchema,
+  deviceId: z.string().max(128).optional(),
+  deviceCreatedAt: isoDateTimeSchema.optional(),
+  /** The version this edit was made against. Absent on a create. */
+  baseVersion: z.number().int().positive().optional(),
+});
+
 export const syncMetadataSchema = z.object({
   id: uuidSchema,
   version: z.number().int().positive(),

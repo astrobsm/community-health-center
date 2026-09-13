@@ -216,6 +216,13 @@ export const ROLE_TEMPLATES: Record<RoleCode, { name: string; description: strin
       'config.write',
       'rbac.write',
       'capex.approve',
+      // Sealing Day 0 is irreversible and establishes the reference point for
+      // the whole partnership, so it sits with the administrator rather than
+      // the project manager who captured the assessment. Same reasoning for
+      // verification: its value comes from being done by someone else.
+      'baseline.seal',
+      'evidence.verify',
+      'assessment.verify',
       'financial_model.approve',
       'proposal.approve',
       'contract.draft',

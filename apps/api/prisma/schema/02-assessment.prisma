@@ -195,6 +195,13 @@ model AssessmentResponse {
   /// assessor is still standing in front of the thing being assessed.
   answer          Json?
   score           Decimal?           @db.Decimal(8, 4)
+  /// "This does not apply here" is a DIFFERENT fact from "unanswered", and from
+  /// "answered zero". It excludes the item from scoring rather than scoring it
+  /// zero, so a facility with no laboratory is not marked down for a missing
+  /// centrifuge. It is a column rather than an inference from a null answer,
+  /// because inferring it would make a genuinely blank answer with a note look
+  /// deliberate.
+  notApplicable   Boolean            @default(false) @map("not_applicable")
   note            String?
   classification  DataClassification @default(REPORTED)
   isVerified      Boolean            @default(false) @map("is_verified")

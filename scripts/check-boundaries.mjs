@@ -110,16 +110,26 @@ async function* walk(dir) {
   }
 }
 
+/**
+ * The module a file belongs to, or null for a file sitting directly in
+ * `modules/`.
+ *
+ * Those are AGGREGATOR modules — composition roots that wire several modules
+ * together (revitalisation.module.ts and friends). They legitimately import
+ * from everything they compose, which is not a layering violation: it is the
+ * one place the wiring is allowed to be explicit.
+ */
 function moduleOf(filePath) {
   const rel = relative(API_MODULES_DIR, filePath);
-  const [name] = rel.split(sep);
-  return name;
+  const parts = rel.split(sep);
+  return parts.length > 1 ? parts[0] : null;
 }
 
 /** Resolve a relative import back to a sibling module name, if it crosses one. */
 function targetModule(fromFile, importPath) {
   if (!importPath.startsWith('.')) return null;
   const fromModule = moduleOf(fromFile);
+  if (fromModule === null) return null; // aggregator: see moduleOf()
   const resolved = join(fromFile, '..', importPath);
   const rel = relative(API_MODULES_DIR, resolved);
   if (rel.startsWith('..')) return null;
@@ -140,6 +150,7 @@ async function main() {
 
   for await (const file of walk(API_MODULES_DIR)) {
     const from = moduleOf(file);
+    if (from === null) continue; // aggregator module, not a layer participant
     const fromLayer = LAYERS[from];
     const source = await readFile(file, 'utf8');
 
