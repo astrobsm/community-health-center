@@ -76,7 +76,7 @@ Rationale for every choice: [`docs/architecture/01-technology-stack.md`](docs/ar
 ```
 apps/
   api/                NestJS API + workers + Prisma schema and migrations
-  web/                React PWA
+  web/                React PWA (not yet started — Release 1 UI)
 packages/
   contracts/          Zod schemas, shared types, permission catalogue, money helpers
   config/             shared tsconfig / eslint / prettier
@@ -168,8 +168,8 @@ Twelve controlled releases, defined in
 
 | | Release | Status |
 |---|---|---|
-| 0 | Architecture, schema, security baseline | **current** |
-| 1 | Foundation — auth, org, facility, users, roles, audit | next |
+| 0 | Architecture, schema, security baseline | **complete** — 28 invariants verified against a real PostgreSQL |
+| 1 | Foundation — auth, org, facility, users, roles, audit | **server complete** — 24 checks verified end to end; **web client not started**, so Release 1 does not yet meet its own Definition of Done (criterion 7, responsive UI) |
 | 2 | Field assessment, evidence, baseline | |
 | 3 | Planning — needs, CAPEX, risk, financial model | |
 | 4 | Partnership — revenue models, capital recovery | |
