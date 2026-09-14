@@ -81,9 +81,10 @@ because no code path reads `baseline_metric` when computing a current value.
 
 ---
 
-## 4. The lineage service
+## 4. The lineage service — built in R10
 
-A first-class API, not a debugging convenience:
+Implemented in `apps/api/src/modules/analytics/lineage.service.ts`. A first-class API, not a
+debugging convenience:
 
 ```
 GET /api/v1/lineage/:entityType/:id/upstream     what produced this value
@@ -115,8 +116,20 @@ Example response for a dashboard revenue figure:
 }
 ```
 
-The `definition` field is the SQL identity of the figure. A finance officer who disputes a number can
+The `definition` field is the identity of the figure. A finance officer who disputes a number can
 read exactly how it was computed, and the query is version-controlled like any other code.
+
+**What the implementation adds to this sketch.** Two fields the example above does not show, both
+because the walk needs to distinguish three things that a shorter response would flatten into one:
+
+- `withheld` names every hop the caller's permissions do not reach, and why. The hop is *absent*
+  from the chain, not present and disabled — a disabled link still tells you the record exists.
+- `broken` names every link the data itself does not have: a payment allocated to no invoice, a
+  charge with no encounter, a project raised with no recommendation behind it. Without this, a hole
+  in the chain and the end of the chain look identical.
+
+Supported entity types as at R10: payment, invoice, charge, encounter, patient, journal_entry,
+asset, project, kpi_result. Anything else is refused by name rather than returning an empty walk.
 
 ---
 

@@ -20,3 +20,4 @@ export * from './clinical.js';
 export * from './operations.js';
 export * from './people.js';
 export * from './quality.js';
+export * from './analytics.js';

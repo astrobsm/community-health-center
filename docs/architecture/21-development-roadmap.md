@@ -177,8 +177,12 @@ built and tested in Release 2; no new sync machinery was needed, and the Playwri
 
 Laboratory (catalogue, orders, samples, results, verification, QC, critical results), pharmacy
 (verification, FEFO dispensing, returns), inventory (batches, the stock ledger, counts,
-adjustments, alerts), billing, payments, the double-entry ledger, periods, and daily cash
-reconciliation.
+adjustments, alerts), charges, the double-entry ledger, periods, and daily cash reconciliation.
+
+*Corrected during R10:* this entry originally read "billing, payments". What shipped was charges
+raised by dispensing and the laboratory, and the ledger they post to. Nothing created an invoice or
+a patient payment until Release 10 built the `billing` module, which is where those belong in this
+list's history.
 
 **Acceptance:** criteria G, H and I — dispensing atomically updates stock, charges and the ledger;
 stock can never go negative; the daily cash identity balances; a critical lab result escalates until
@@ -242,15 +246,60 @@ improvement-cycle path, which requires a measured indicator before a review can 
 
 ---
 
-### Release 10 — Analytics
+### Release 10 — Analytics ✅
 
-Role-specific dashboards, materialised views, drill-down from every figure to its source records,
-baseline/current/target comparison, benchmarking, project health score, public value, the
-clinical-versus-financial balance dashboard, the data quality engine, and global search.
+Role-specific dashboards, a materialised daily rollup, drill-down from every figure to its source
+records, baseline/current/target comparison, benchmarking, project health score, public value, the
+clinical-versus-financial balance, the data quality engine, and global search. Billing — invoices,
+payments and waivers — was built here; see below.
 
-**Acceptance:** criteria B and M — every dashboard figure is clickable down to source rows; the
+**Acceptance:** criteria B and M — every dashboard figure is clickable down to its source rows; the
 baseline comparison reconciles; no dashboard renders a number without its classification and
 timestamp.
+
+**Verified by:** 34 unit tests over the comparison, data quality, benchmark and project health
+engines, 16 over the figure schema itself, and `npm run smoke:analytics` — 69 checks end to end in
+which a consultation becomes a charge, an invoice, a payment and two journal lines, and the chain is
+then walked in both directions: payment to invoice to charge to encounter to patient, and encounter
+to charge to invoice to payment to journal entry. Database invariants: 125 (up from 113).
+
+**"No number without its provenance" is a mechanism, not a convention.** Every dashboard payload is
+parsed through `figureSchema` on the way out. A figure lacking a classification, a computation time,
+the named query behind it or the tables that query read fails the request rather than rendering. So
+does a figure that is neither clickable down to its rows nor says in words why it has none, and so
+does a suppressed figure that still carries the value it claims to withhold. The smoke suite asserts
+this over *every* figure on the page rather than sampling one, because a rule that holds for the
+figure somebody remembered to check is not a rule.
+
+**Permission is re-evaluated at every hop.** A figure carries its own permission, not its section's,
+so a government observer opening the facility overview sees the incident count and not the revenue.
+Walking the lineage chain, the observer reaches the encounter and stops: the patient node is absent
+with its reason stated, rather than present and greyed out — a disabled link still tells you the
+record exists.
+
+**The one cached figure.** `analytics.mv_daily_financial` exists because recomputing the daily
+rollup over every journal line on a village 3G link is the difference between a page that opens and
+one that times out. It is permitted under three conditions, all enforced: nothing writes to it;
+every response drawn from it carries the moment it was last rebuilt and says so when that is stale;
+and `analytics.reconcile_daily_financial()` recomputes the same figures from the base tables and
+returns every disagreement, with the refresh endpoint and the invariant suite both running it.
+Row-level security does not apply to a materialised view, so the application role is never granted
+it — it reads a security-barrier view carrying the same predicate, which the invariant suite proves
+returns nothing without a tenant scope.
+
+**Billing was missing and is now built.** Release 8 recorded charges from dispensing and the
+laboratory, and recorded the ledger, but nothing in the system ever created an invoice or a patient
+payment — so Chain 1 of doc 22, care to money, could not be walked past the charge. Criterion M
+depends on that chain, so `billing` was built here: invoices issued from charges, payments with
+explicit allocations, waivers that reverse their own revenue posting, and eleven database invariants
+including deferred triggers that refuse an invoice whose recorded payments disagree with the
+allocations against it, and a payment allocated to more than it was worth.
+
+**Deferred with reason:** the drill-down stops at the transaction list rather than continuing to a
+scanned source document, because evidence attachment on financial records is not yet modelled.
+Downstream tracing from an asset or a journal entry reports that it is not implemented rather than
+returning an empty list. Benchmarking runs across the facilities of one organisation; comparing
+across organisations raises questions of consent between partners that nobody has yet answered.
 
 ---
 

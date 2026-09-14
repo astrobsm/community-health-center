@@ -238,6 +238,17 @@ apps/web/src/
 Each feature folder contains `api.ts` (typed calls against `packages/contracts`), `hooks.ts`
 (TanStack Query), `components/`, `pages/`, and `offline.ts` where the feature is offline-capable.
 
+### `analytics` is one module at L5
+
+`dashboard`, `reporting`, `analytics`, `benchmarking` and `search` are listed separately above and
+are implemented as one module, `apps/api/src/modules/analytics/`, declared at L5. They share the one
+thing that makes splitting them counterproductive: the figure. A dashboard figure, its drill-down,
+its lineage walk and its benchmark row are four views of the same declared object, and separating
+them would mean four modules importing one another to agree on what a number is.
+
+`billing` sits at L3 and imports `finance`, never the reverse — that edge is broken deliberately and
+the boundary checker enforces it.
+
 ### `hr`, `attendance` and `performance` are one directory
 
 They are listed separately above because they are three responsibilities, and the layer rules apply

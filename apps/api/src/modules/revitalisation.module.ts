@@ -41,6 +41,13 @@ import { ProcurementController } from './procurement/procurement.controller';
 import { ProcurementService } from './procurement/procurement.service';
 import { AssetController, ProjectController } from './project/project.controller';
 import { ProjectService } from './project/project.service';
+import { AnalyticsController, LineageController } from './analytics/analytics.controller';
+import { BillingController } from './billing/billing.controller';
+import { BillingService } from './billing/billing.service';
+import { ComparisonService } from './analytics/comparison.service';
+import { DashboardService } from './analytics/dashboard.service';
+import { DataQualityService } from './analytics/data-quality.service';
+import { LineageService } from './analytics/lineage.service';
 import { KpiController } from './kpi/kpi.controller';
 import { KpiService } from './kpi/kpi.service';
 import { AttendanceService } from './people/attendance.service';
@@ -77,9 +84,14 @@ import { QualityService } from './quality/quality.service';
  *   patient   <- facility; encounter <- patient (consent gates care)
  *   finance   <- nothing above it: one door to the ledger, called by the rest
  *   inventory, pharmacy, laboratory <- finance (every movement posts)
+ *   billing   <- finance: charges, invoices, payments and waivers. finance
+ *                must never import billing — that edge is broken deliberately
  *   document  <- L4: reads from every domain module below it and writes none
  *   people    <- staff, credentials, attendance, performance, incentives (L3)
  *   kpi       <- L4: computes from every domain below it, writes only results
+ *   analytics <- L5: dashboards, lineage, drill-down, benchmarking, data
+ *                quality and search. Reads everything; writes nothing but the
+ *                audit trail of who looked at what.
  *   config    <- everything above it
  *
  * `baseline` depends on `evidence` (it must know what is still uploading) but
@@ -123,6 +135,9 @@ import { QualityService } from './quality/quality.service';
     ComplaintController,
     QualityCycleController,
     KpiController,
+    AnalyticsController,
+    LineageController,
+    BillingController,
   ],
   providers: [
     {
@@ -289,6 +304,33 @@ import { QualityService } from './quality/quality.service';
         new KpiService(prisma, audit, config),
     },
     {
+      provide: BillingService,
+      inject: [PrismaService, AuditService, FinanceService],
+      useFactory: (prisma: PrismaService, audit: AuditService, finance: FinanceService) =>
+        new BillingService(prisma, audit, finance),
+    },
+    {
+      provide: DashboardService,
+      inject: [PrismaService, AuditService, ConfigService],
+      useFactory: (prisma: PrismaService, audit: AuditService, config: ConfigService) =>
+        new DashboardService(prisma, audit, config),
+    },
+    {
+      provide: LineageService,
+      inject: [PrismaService],
+      useFactory: (prisma: PrismaService) => new LineageService(prisma),
+    },
+    {
+      provide: ComparisonService,
+      inject: [PrismaService, ConfigService],
+      useFactory: (prisma: PrismaService, config: ConfigService) => new ComparisonService(prisma, config),
+    },
+    {
+      provide: DataQualityService,
+      inject: [PrismaService, ConfigService],
+      useFactory: (prisma: PrismaService, config: ConfigService) => new DataQualityService(prisma, config),
+    },
+    {
       provide: ContractService,
       inject: ['Env', PrismaService, StorageService, AuditService],
       useFactory: (env: Env, prisma: PrismaService, storage: StorageService, audit: AuditService) =>
@@ -321,6 +363,11 @@ import { QualityService } from './quality/quality.service';
     PerformanceService,
     IncidentService,
     KpiService,
+    DashboardService,
+    LineageService,
+    ComparisonService,
+    DataQualityService,
+    BillingService,
     ConfigService,
   ],
 })

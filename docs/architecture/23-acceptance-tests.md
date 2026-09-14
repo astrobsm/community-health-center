@@ -17,14 +17,22 @@ configured metric; each carries its source reference and classification; a conte
 and any subsequent `UPDATE` or `DELETE` on a metric raises a database exception.
 **And** sealing a second time creates `sequence = 2` without altering `sequence = 1`.
 
-### B — Baseline data can be compared with current data
-`metrics.comparison.spec.ts`
+### B — Baseline data can be compared with current data ✅
+`apps/api/src/modules/analytics/domain/analytics.spec.ts` and `apps/api/scripts/smoke-analytics.sh`
 
-**Given** a sealed baseline of 8 patients/day, and 90 days of encounters averaging 31/day
-**Then** the comparison returns baseline 8 (from the snapshot), current 31 (computed from
-`encounter`), target from the KPI, change +23, and a trend with its sample size.
-**And** mutating `baseline_metric` cannot change the current value — proving the two come from
-different sources.
+**Given** a sealed baseline of 8 patients/day and encounters recorded since
+**Then** the comparison returns the baseline from the snapshot, the current value computed from
+`clinical.encounter`, the target from the KPI assignment, the change between them, and the
+denominator the current value rests on.
+**And** `baseline_metric` cannot be mutated at all — the smoke suite attempts it and the immutability
+trigger refuses — so the stronger property holds: the baseline is not merely a different number, it
+is a number nothing can change.
+
+The two halves are read by different queries from different tables and handed to a pure engine that
+has no way to fetch either, so conflating them is structurally impossible rather than discouraged.
+A comparison missing either half reports `comparable: false` with the reason in words: a current
+value with no baseline claims no improvement, and a missing current value is an absence of
+measurement rather than a fall to zero.
 
 ### C — Findings can become projects
 `finding-to-project.spec.ts`
@@ -112,11 +120,27 @@ Enumerates every mutating route, exercises each, and asserts a corresponding `au
 actor, action, entity, old value, new value, device and trace id. A route producing no audit row
 fails the build.
 
-### M — All major metrics can be traced to their source
-`lineage.spec.ts`
+### M — All major metrics can be traced to their source ✅
+`apps/api/src/modules/analytics/lineage.service.ts`, `packages/contracts/src/analytics.spec.ts`
+and `apps/api/scripts/smoke-analytics.sh`
 
-For each reported metric, walk upstream to the originating record. Any broken link fails. Also
-asserts that classification weakening propagates correctly through aggregation.
+Two halves, both mechanical.
+
+**Every figure carries its provenance.** `figureSchema` refuses a figure without a classification, a
+computation time, the named query behind it and the tables that query read; refuses one that is
+neither clickable down to its rows nor says why it has none; and refuses a suppressed figure that
+still carries its value. Every dashboard payload is parsed through it on the way out, so a bare
+number fails the request instead of rendering. The smoke suite checks this over every figure on the
+page, not a sample.
+
+**Every figure opens onto its rows, and the rows onto their records.** From the revenue total to the
+payments, from a payment to the invoice, the charge, the encounter and the patient — each hop a
+foreign key, each hop re-checked against the caller's permissions. A hop beyond the caller is absent
+with its reason stated rather than present and disabled. A link the data does not have is reported
+as broken rather than passed over, so a hole never looks like the end of the chain.
+
+Classification travels with the walk: the chain reports the weakest classification of every node in
+it, so a chain resting on one estimate cannot present itself as actual.
 
 ### N — The system can operate offline
 `offline-sync.e2e.ts`
@@ -222,6 +246,6 @@ a clickable mock-up.
 | R7 | `amendment-chain`, `clinical-timeline`, `offline-clinical.e2e` |
 | R8 | Criteria G, H, I; `no-negative-stock`, `journal-balance`, `cash-reconciliation` |
 | R9 | Criterion J ✅ — 56 unit tests, `smoke:people` (95 checks), 113 database invariants |
-| R10 | Criteria B, M; `dashboard-source`, `small-cell` |
+| R10 | Criteria B, M ✅ — 50 unit tests, `smoke:analytics` (69 checks), 125 database invariants |
 | R11 | `ai-no-write-access`, `ai-grounding`, `ai-injection`, `ai-labelling`, `ai-disabled` |
 | Final | `acceptance/full-chain.e2e.ts` |

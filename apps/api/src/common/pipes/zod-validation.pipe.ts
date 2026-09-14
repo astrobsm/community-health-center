@@ -26,3 +26,15 @@ export class ZodValidationPipe implements PipeTransform {
 export function zodBody(schema: ZodSchema): ZodValidationPipe {
   return new ZodValidationPipe(schema);
 }
+
+/**
+ * The same, for a query string: `@Query(zodQuery(dashboardQuerySchema))`.
+ *
+ * Distinct from `zodBody` only in name, and the name is the point: a reader
+ * scanning a controller can see at a glance which schema governs which part of
+ * the request. Query values arrive as strings, so the schemas used here coerce
+ * their numbers rather than assuming them.
+ */
+export function zodQuery(schema: ZodSchema): ZodValidationPipe {
+  return new ZodValidationPipe(schema);
+}

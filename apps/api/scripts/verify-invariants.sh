@@ -630,6 +630,69 @@ must_succeed "an anonymous complaint with no name is accepted" "INSERT INTO qual
  VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','CMP-V0002','BOX','Waiting','Waited all morning',true);"
 
 echo
+echo "=== Billing: an invoice and the money against it (spec sections 31-32) ==="
+
+BILL_INV=ffffffff-5555-0000-0000-000000000001
+BILL_PAY=ffffffff-5555-0000-0000-000000000002
+BILL_INV2=ffffffff-5555-0000-0000-000000000003
+
+must_fail "an invoice whose total disagrees with its own lines is refused" "INSERT INTO fin.invoice (id,organisation_id,facility_id,reference,subtotal_minor,discount_minor,total_minor)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','INV-V0001',150000,0,999999);"
+
+must_fail "an issued invoice that does not say when is refused" "INSERT INTO fin.invoice (id,organisation_id,facility_id,reference,status,subtotal_minor,discount_minor,total_minor)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','INV-V0002','ISSUED',150000,0,150000);"
+
+must_succeed "an issued invoice of 1,500 naira is accepted" "INSERT INTO fin.invoice (id,organisation_id,facility_id,reference,status,issued_at,subtotal_minor,discount_minor,total_minor,paid_minor)
+ VALUES ('$BILL_INV','$ORG_A','$FAC_A','INV-V0003','ISSUED',now(),150000,0,150000,0);"
+
+must_fail "an invoice paid more than it asks for is refused" "UPDATE fin.invoice SET paid_minor=200000 WHERE id='$BILL_INV';"
+
+must_succeed "a payment of 1,500 naira is received" "INSERT INTO fin.payment (id,organisation_id,facility_id,reference,direction,amount_minor,method)
+ VALUES ('$BILL_PAY','$ORG_A','$FAC_A','PAY-V0001','INBOUND',150000,'CASH');"
+
+# Isolated deliberately. Written as one over-allocation it would be refused
+# by the invoice-agrees trigger instead, and the check would pass while
+# testing a different rule than the one its name claims.
+must_succeed "a second invoice exists to allocate against" "INSERT INTO fin.invoice (id,organisation_id,facility_id,reference,status,issued_at,subtotal_minor,discount_minor,total_minor,paid_minor)
+ VALUES ('$BILL_INV2','$ORG_A','$FAC_A','INV-V0004','ISSUED',now(),150000,0,150000,0);"
+
+must_fail "allocating more of a payment than it was worth is refused" "BEGIN;
+ INSERT INTO fin.payment_allocation (id,payment_id,invoice_id,organisation_id,amount_minor)
+ VALUES (gen_random_uuid(),'$BILL_PAY','$BILL_INV','$ORG_A',100000);
+ UPDATE fin.invoice SET paid_minor=100000, status='PARTIALLY_PAID' WHERE id='$BILL_INV';
+ INSERT INTO fin.payment_allocation (id,payment_id,invoice_id,organisation_id,amount_minor)
+ VALUES (gen_random_uuid(),'$BILL_PAY','$BILL_INV2','$ORG_A',100000);
+ UPDATE fin.invoice SET paid_minor=100000, status='PARTIALLY_PAID' WHERE id='$BILL_INV2';
+ COMMIT;"
+
+must_fail "an allocation the invoice does not know about is refused" "INSERT INTO fin.payment_allocation (id,payment_id,invoice_id,organisation_id,amount_minor)
+ VALUES (gen_random_uuid(),'$BILL_PAY','$BILL_INV','$ORG_A',150000);"
+
+must_succeed "an allocation the invoice agrees with is accepted" "BEGIN;
+ INSERT INTO fin.payment_allocation (id,payment_id,invoice_id,organisation_id,amount_minor)
+ VALUES (gen_random_uuid(),'$BILL_PAY','$BILL_INV','$ORG_A',150000);
+ UPDATE fin.invoice SET paid_minor=150000, status='PAID' WHERE id='$BILL_INV';
+ COMMIT;"
+
+must_fail "an allocation of nothing is refused" "INSERT INTO fin.payment_allocation (id,payment_id,invoice_id,organisation_id,amount_minor)
+ VALUES (gen_random_uuid(),'$BILL_PAY','$BILL_INV','$ORG_A',0);"
+
+echo
+echo "=== Analytics: a cache that cannot become a second source of truth ==="
+
+must_succeed "the daily rollup agrees with the tables it was built from" "DO \$v\$
+ DECLARE n integer;
+ BEGIN
+   PERFORM analytics.refresh_views(false);
+   SELECT count(*) INTO n FROM analytics.reconcile_daily_financial();
+   IF n > 0 THEN
+     RAISE EXCEPTION 'the cached rollup disagrees with the base tables on % row(s)', n;
+   END IF;
+ END \$v\$;"
+
+must_fail "the application role cannot read the materialised view directly" "SET LOCAL ROLE chc_app; SELECT count(*) FROM analytics.mv_daily_financial;"
+
+echo
 echo "=== Row-level security (ADR 0005) ==="
 echo "  (run as chc_app, which does NOT bypass RLS)"
 

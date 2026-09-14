@@ -65,6 +65,11 @@ END \$\$;
 GRANT USAGE ON SCHEMA core, assess, plan, exec, clinical, supply, fin, people, qual, audit TO chc_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA core, assess, plan, exec, clinical, supply, fin, people, qual, audit TO chc_app;
 GRANT EXECUTE ON FUNCTION core.authenticate_lookup(citext), core.user_scope_lookup(uuid) TO chc_app;
+-- Analytics: the tenant-scoped barrier view only. Row-level security does not
+-- apply to a materialised view, so the app role must never reach one directly.
+GRANT USAGE ON SCHEMA analytics TO chc_app;
+GRANT SELECT ON analytics.daily_financial, analytics.view_refresh TO chc_app;
+REVOKE ALL ON analytics.mv_daily_financial FROM chc_app;
 ALTER ROLE chc_app NOBYPASSRLS;
 " >/dev/null
 

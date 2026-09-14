@@ -175,3 +175,72 @@ export const recordPatientPaymentSchema = z.object({
   externalReference: z.string().max(200).optional(),
 });
 export type RecordPatientPayment = z.infer<typeof recordPatientPaymentSchema>;
+
+// -----------------------------------------------------------------------------
+// Billing (spec §§31-32)
+//
+// Charges are raised by the clinical and pharmacy paths as care happens. These
+// are the three acts a cashier performs on them: bill for them, take the money,
+// or decide the patient will not be asked for it.
+// -----------------------------------------------------------------------------
+
+export const raiseChargeSchema = z.object({
+  facilityId: uuidSchema,
+  encounterId: uuidSchema.optional(),
+  description: z.string().min(2).max(200),
+  quantity: z.number().positive().default(1),
+  unitPriceMinor: z.number().int().nonnegative(),
+  /** Which revenue account it belongs in. */
+  kind: z
+    .enum([
+      'CONSULTATION',
+      'LABORATORY',
+      'PHARMACY',
+      'PROCEDURE',
+      'MATERNITY',
+      'IMMUNISATION',
+      'ADMISSION',
+      'OTHER',
+    ])
+    .default('CONSULTATION'),
+  serviceDate: isoDateSchema,
+});
+export type RaiseCharge = z.infer<typeof raiseChargeSchema>;
+
+export const issueInvoiceSchema = z.object({
+  facilityId: uuidSchema,
+  patientId: uuidSchema.optional(),
+  payerType: z.enum(['SELF_PAY', 'NHIS', 'HMO', 'EMPLOYER', 'GOVERNMENT', 'WAIVER']).default('SELF_PAY'),
+  payerName: z.string().max(200).optional(),
+  /** The charges this invoice bills for. An invoice with no charge bills nothing. */
+  chargeIds: z.array(uuidSchema).min(1),
+  dueDate: isoDateSchema.optional(),
+  discountMinor: z.number().int().nonnegative().default(0),
+});
+export type IssueInvoice = z.infer<typeof issueInvoiceSchema>;
+
+export const receivePaymentSchema = z.object({
+  facilityId: uuidSchema,
+  amountMinor: z.number().int().positive(),
+  method: z.enum(['CASH', 'POS', 'BANK_TRANSFER', 'NHIS', 'HMO', 'WAIVER', 'OTHER']),
+  externalReference: z.string().max(100).optional(),
+  /**
+   * Which invoices this money settles, and by how much.
+   *
+   * Explicit rather than inferred: money applied to whichever invoice happened
+   * to be oldest is money a patient cannot reconcile against what they were
+   * told they owed.
+   */
+  allocations: z
+    .array(z.object({ invoiceId: uuidSchema, amountMinor: z.number().int().positive() }))
+    .min(1),
+  notes: z.string().max(1000).optional(),
+});
+export type ReceivePayment = z.infer<typeof receivePaymentSchema>;
+
+export const waiveChargeSchema = z.object({
+  chargeId: uuidSchema,
+  /** Who decided, and why. A waiver with no reason is indistinguishable from a loss. */
+  reason: z.string().min(10).max(1000),
+});
+export type WaiveCharge = z.infer<typeof waiveChargeSchema>;
