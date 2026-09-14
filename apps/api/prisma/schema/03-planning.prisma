@@ -311,6 +311,9 @@ model ModelProjection {
   patientCount           Decimal            @map("patient_count") @db.Decimal(12, 2)
   revenueMinor           BigInt             @map("revenue_minor")
   collectionsMinor       BigInt             @map("collections_minor")
+  /// Billed revenue the collection rate says will never arrive. A cost, not a
+  /// timing difference — the lag handles timing.
+  badDebtMinor           BigInt             @default(0) @map("bad_debt_minor")
   directCostMinor        BigInt             @map("direct_cost_minor")
   opexMinor              BigInt             @map("opex_minor")
   staffCostMinor         BigInt             @map("staff_cost_minor")

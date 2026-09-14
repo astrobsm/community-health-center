@@ -8,12 +8,20 @@ import { AssessmentService } from './assessment/assessment.service';
 import { AuditService } from './audit/audit.service';
 import { BaselineController } from './baseline/baseline.controller';
 import { BaselineService } from './baseline/baseline.service';
+import { CapexController } from './capex/capex.controller';
+import { CapexService } from './capex/capex.service';
 import { ConfigService } from './config/config.service';
 import { EvidenceController } from './evidence/evidence.controller';
 import { EvidenceService } from './evidence/evidence.service';
 import { StorageService } from './evidence/storage.service';
 import { FacilityController } from './facility/facility.controller';
 import { FacilityService } from './facility/facility.service';
+import { FinancialModelController } from './financial-model/financial-model.controller';
+import { FinancialModelService } from './financial-model/financial-model.service';
+import { NeedController, RecommendationController } from './needs/needs.controller';
+import { NeedsService } from './needs/needs.service';
+import { ComplianceController, RiskController } from './quality/quality.controller';
+import { QualityService } from './quality/quality.service';
 
 /**
  * Mode A — the revitalisation command centre (doc 00 §3).
@@ -21,10 +29,17 @@ import { FacilityService } from './facility/facility.service';
  * Dependencies flow downward only, as the boundary checker enforces:
  *   facility  <- assessment <- baseline
  *   evidence  <- assessment, baseline
+ *   needs     <- assessment (a need cites a finding)
+ *   capex     <- needs
+ *   quality   <- sits above them all (L4): risk and compliance registers
  *   config    <- everything above it
  *
  * `baseline` depends on `evidence` (it must know what is still uploading) but
  * evidence knows nothing about baselines — that direction would be a cycle.
+ *
+ * `financial-model` deliberately depends on nothing above it. It reads its own
+ * assumptions and computes; that isolation is what lets the projection be
+ * tested exhaustively without a database.
  */
 @Module({
   controllers: [
@@ -33,6 +48,12 @@ import { FacilityService } from './facility/facility.service';
     FindingController,
     EvidenceController,
     BaselineController,
+    NeedController,
+    RecommendationController,
+    CapexController,
+    RiskController,
+    ComplianceController,
+    FinancialModelController,
   ],
   providers: [
     {
@@ -72,7 +93,37 @@ import { FacilityService } from './facility/facility.service';
         evidence: EvidenceService,
       ) => new BaselineService(prisma, audit, config, evidence),
     },
+    {
+      provide: NeedsService,
+      inject: [PrismaService, AuditService],
+      useFactory: (prisma: PrismaService, audit: AuditService) => new NeedsService(prisma, audit),
+    },
+    {
+      provide: CapexService,
+      inject: [PrismaService, AuditService],
+      useFactory: (prisma: PrismaService, audit: AuditService) => new CapexService(prisma, audit),
+    },
+    {
+      provide: QualityService,
+      inject: [PrismaService, AuditService],
+      useFactory: (prisma: PrismaService, audit: AuditService) => new QualityService(prisma, audit),
+    },
+    {
+      provide: FinancialModelService,
+      inject: [PrismaService, AuditService],
+      useFactory: (prisma: PrismaService, audit: AuditService) => new FinancialModelService(prisma, audit),
+    },
   ],
-  exports: [FacilityService, AssessmentService, EvidenceService, BaselineService, ConfigService],
+  exports: [
+    FacilityService,
+    AssessmentService,
+    EvidenceService,
+    BaselineService,
+    NeedsService,
+    CapexService,
+    QualityService,
+    FinancialModelService,
+    ConfigService,
+  ],
 })
 export class RevitalisationModule {}

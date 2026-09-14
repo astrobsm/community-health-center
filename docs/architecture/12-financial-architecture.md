@@ -184,29 +184,78 @@ They meet only in the forecast-versus-actual comparison.
 **Inputs** (`model_assumption`, each classified `ASSUMPTION`, each with a rationale):
 patients/day, operating days/month, service mix %, tariff per service, annual growth %, inflation %,
 variable cost ratio, fixed monthly costs, staff costs, incentive pool %, CAPEX schedule, working
-capital requirement, collection rate, and bad-debt %.
+capital, opening cash, depreciation period, collection rate, and collection lag.
 
-**Engine** — a pure function, `apps/api/src/modules/financial-model/domain/project.ts`, with no I/O,
-producing 60 monthly periods:
+Each of these is one row, including every service line's share, tariff and cost ratio. An assumption
+row is the unit that carries a rationale, locks on approval, and produces an impact preview when
+changed — a tariff buried in a JSON blob would have none of those properties, and tariffs are
+exactly what gets renegotiated.
+
+There is no separate bad-debt input: uncollected revenue IS `1 − collection_rate`, and holding the
+same quantity in two places would let them disagree.
+
+**Engine** — a pure function, `apps/api/src/modules/financial-model/domain/projection.ts`, with no
+I/O, no ambient clock and no randomness, producing 60 monthly periods:
 
 ```
-revenue[m]          = patients[m] × mix × tariff[m]
-collections[m]      = revenue[m] × collection_rate, lagged by collection_days
-direct_cost[m]      = revenue[m] × variable_cost_ratio
-opex[m]             = (fixed_costs + staff_costs) × inflation_factor[m]
-ebitda[m]           = revenue[m] − direct_cost[m] − opex[m]
+growth[m]           = (1 + annual_growth) ^ (m / 12)        -- annual, applied monthly
+inflation[m]        = (1 + annual_inflation) ^ (m / 12)
+
+patients[m]         = patients_per_day × operating_days × growth[m]
+revenue[m]          = patients[m] × Σ(mix × tariff)         -- tariffs are NOT inflated
+bad_debt[m]         = revenue[m] × (1 − collection_rate)
+collections[m]      = revenue[m − lag] × collection_rate
+direct_cost[m]      = patients[m] × Σ(mix × tariff × variable_cost_ratio) × inflation[m]
+opex[m]             = fixed_costs × inflation[m]
+staff[m]            = staff_costs × inflation[m]
+incentive[m]        = max(0, revenue − bad_debt − direct − opex − staff) × incentive_rate
+ebitda[m]           = revenue − bad_debt − direct − opex − staff − incentive
 surplus[m]          = ebitda[m] − depreciation[m]
-cash[m]             = cash[m−1] + collections[m] − cash_costs[m] − capex[m]
-break_even_month    = first m where cumulative_surplus ≥ 0
-payback_month       = first m where cumulative_net_cash ≥ total_investment
+cash[m]             = cash[m−1] + collections[m] − (direct + opex + staff + incentive) − capex[m]
+break_even_month    = first m where cumulative_surplus ≥ 0, else NULL
+payback_month       = first m where cumulative_net_cash ≥ total_investment, else NULL
 ```
+
+Four of those lines are there for reasons worth stating:
+
+- **Growth and inflation compound annually**, applied monthly. 1% a month is 12.7% a year, not 12%,
+  and over five years that error reaches 40%.
+- **Tariffs are not inflated.** A tariff changes when somebody changes it, which is an assumption
+  edit with an impact preview — not something that drifts upward on its own. Costs do inflate, so
+  margins compress over the horizon unless tariffs are revisited. That is the real pressure a
+  facility is under, and the model should show it rather than assume it away.
+- **Uncollected revenue is a cost in the month it is billed.** The collection rate is a loss; the
+  lag is the delay. Without this, a facility collecting 92% would report five years of surplus
+  containing 8% of revenue it never saw, break even earlier than it truly does, and — once a
+  partnership shares surplus — distribute against uncollected billings.
+- **Cash uses collections, not revenue, and excludes depreciation.** Conflating the two is the most
+  common error in a spreadsheet model, and it hides exactly the month a facility runs out of money.
+
+`break_even_month` and `payback_month` are NULL when they never occur. A model that never breaks
+even must say so: a fabricated month here would be the single most misleading number the system
+could produce.
 
 **Scenarios** — `CONSERVATIVE | BASE | GROWTH | STRESS`, each a full assumption set, never a
 multiplier applied to a single base case (a stress case with different cost behaviour cannot be
 expressed as one scalar).
 
 **Sensitivity** — one-at-a-time variation of each driver by ±10/20/30%, reported as the impact on
-break-even month, five-year surplus, and partner payback.
+break-even month, five-year surplus, and partner payback. Deliberately not a Monte Carlo simulation:
+a distribution over inputs nobody has measured produces a confidence interval that looks
+authoritative and means nothing, whereas "if volume is 20% lower, break-even moves from month 21 to
+month 44" is a sentence a facility manager can argue with.
+
+**Change impact** (spec §72) — before an assumption is written, the engine reports what the change
+would do to revenue, surplus, break-even, payback, cash and working capital, and warns when a
+break-even disappears or the facility would run out of money. Which outputs an assumption affects is
+declared, not inferred, so a new output cannot be added without stating what it depends on.
+
+**Locking** — approving a model locks every assumption. Changing one then returns `423 Locked`.
+Unlocking is a separate permission and does not reopen the approved model: it creates the next
+version and marks the approved one superseded, so what a government partner was shown stays exactly
+as it was. Authorship carries across, so the approver who unlocked is still not the author and a
+second pair of eyes is still required. Database triggers refuse a locked assumption change and any
+edit to a projected period, so none of this depends on the application being the caller.
 
 Every output row is classified `PROJECTED` and stamped with the model version. A projected figure
 can never be presented as actual, and the API schema makes that structurally impossible.

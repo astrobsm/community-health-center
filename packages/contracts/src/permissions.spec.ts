@@ -185,3 +185,53 @@ describe('segregation of duties', () => {
     expect(pairs).toContain('performance.compute_incentive|performance.approve_incentive');
   });
 });
+
+describe('reachability', () => {
+  /**
+   * A permission granted only to SUPER_ADMIN is, in practice, a permission
+   * nobody in an operating organisation holds.
+   *
+   * This test exists because two features were built against permissions no
+   * seeded role carried — the work was correct and simply could not be
+   * performed by anyone. Anything genuinely reserved for platform
+   * administration belongs in the list below, stated on purpose.
+   */
+  const PLATFORM_ONLY: readonly Permission[] = [
+    'admin.system',
+    // Deliberately in no template at all, SUPER_ADMIN's included. Acting as
+    // another person is granted one-off and audited, never inherited.
+    'admin.impersonate',
+  ];
+
+  it('grants every permission to at least one role an organisation can assign', () => {
+    const granted = new Set<string>();
+
+    for (const [code, template] of Object.entries(ROLE_TEMPLATES)) {
+      if (code === 'SUPER_ADMIN') continue;
+      for (const permission of template.permissions) granted.add(permission);
+    }
+
+    const unreachable = PERMISSIONS.filter(
+      (permission) => !granted.has(permission) && !PLATFORM_ONLY.includes(permission),
+    );
+
+    expect(unreachable, 'permissions no assignable role can exercise').toEqual([]);
+  });
+
+  it('gives someone the ability to build a model and someone else the ability to approve it', () => {
+    // Separation of duties only works if both halves actually exist.
+    const holders = (permission: Permission): string[] =>
+      Object.entries(ROLE_TEMPLATES)
+        .filter(([code, template]) => code !== 'SUPER_ADMIN' && template.permissions.includes(permission))
+        .map(([code]) => code);
+
+    expect(holders('financial_model.write').length).toBeGreaterThan(0);
+    expect(holders('financial_model.approve').length).toBeGreaterThan(0);
+    expect(holders('capex.write').length).toBeGreaterThan(0);
+    expect(holders('capex.approve').length).toBeGreaterThan(0);
+
+    // And they must not be the same single role, or the control is decorative.
+    expect(holders('capex.write')).not.toEqual(holders('capex.approve'));
+    expect(holders('financial_model.write')).not.toEqual(holders('financial_model.approve'));
+  });
+});

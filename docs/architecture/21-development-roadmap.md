@@ -25,7 +25,7 @@ A release is complete only when **all nine** hold:
 
 ## 2. Releases
 
-### Release 0 — Architecture ✅ *this release*
+### Release 0 — Architecture ✅
 
 Architecture documents (this folder), ADRs, database schema, migrations, seed of structural
 reference data, repository scaffolding, Docker Compose environment, CI pipeline, security baseline.
@@ -35,7 +35,7 @@ proven by integration test; the architecture answers all eleven questions in spe
 
 ---
 
-### Release 1 — Foundation
+### Release 1 — Foundation ✅
 
 Authentication (Argon2id, EdDSA JWT, rotating refresh, MFA), organisations, facilities, departments,
 services, users, roles, permissions, facility access scoping, audit log, system configuration,
@@ -45,9 +45,11 @@ notification skeleton, design system, application shell, admin screens.
 manager logs in with MFA and sees only their facility; a cross-facility request returns 404 at the
 API and zero rows at SQL; every action appears in the audit log with who/what/when/old/new/device.
 
+**Verified by:** `npm run smoke:auth` — 24 checks against a running API and a real database.
+
 ---
 
-### Release 2 — Field assessment
+### Release 2 — Field assessment ✅
 
 Assessment templates and versioning, sections, items, the mobile assessment engine, offline capture,
 evidence and photograph capture with compression, document upload and OCR hook, verification
@@ -57,9 +59,13 @@ workflow, facility condition index, readiness scoring, baseline sealing.
 reconnects, everything syncs, the baseline is sealed, and a subsequent attempt to modify a sealed
 baseline metric is refused at the database.
 
+**Verified by:** `npm run smoke:assessment` (39 checks) and the Playwright suite on a Pixel 7
+profile, which uploads real photographs to real object storage and asserts they arrive — an earlier
+version of that test passed while zero objects reached the bucket.
+
 ---
 
-### Release 3 — Planning
+### Release 3 — Planning ✅
 
 Needs derivation from findings, recommendations, prioritisation scoring (P1–P4), CAPEX planning and
 categories, working capital, risk register, compliance register, the five-year financial model with
@@ -68,6 +74,12 @@ four scenarios, sensitivity analysis, and the change-impact engine.
 **Acceptance:** findings become needs become recommendations become capex lines; a model produces 60
 periods with break-even and payback; changing a locked assumption is blocked until unlocked and
 shows a full impact preview before it is applied.
+
+**Verified by:** `npm run smoke:planning` — 67 checks end to end, including the full chain
+F-0001 → N-0001 → R-0001 → costed line, a base case that breaks even in month 21 and pays back in
+month 46, a stress case that reports no break-even at all rather than inventing one, `423 Locked`
+on an approved assumption, and an unlock that supersedes rather than overwrites. The database
+invariants behind it are proven separately by `npm run db:test-migrate` (41 checks).
 
 ---
 

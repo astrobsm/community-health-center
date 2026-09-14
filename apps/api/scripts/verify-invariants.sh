@@ -195,6 +195,76 @@ must_fail "an overlapping primary posting is refused" \
  VALUES (gen_random_uuid(),'$STAFF','$ORG_A','$FAC_A','Nurse','2026-06-01',true);"
 
 echo
+
+echo
+echo "=== Planning: the chain from observation to spending (spec sections 17-20, 72) ==="
+
+PLAN=eeeeeeee-0000-0000-0000-000000000001
+MODEL=eeeeeeee-0000-0000-0000-000000000002
+SCENARIO=eeeeeeee-0000-0000-0000-000000000003
+
+# Prerequisites for the checks below. If this setup fails, every planning
+# assertion after it is meaningless, so it is asserted rather than assumed.
+must_succeed "planning fixtures load" \
+"INSERT INTO plan.capex_plan (id,facility_id,organisation_id,name)
+ VALUES ('$PLAN','$FAC_A','$ORG_A','Revitalisation phase 1');
+ INSERT INTO plan.financial_model (id,facility_id,organisation_id,name,start_date)
+ VALUES ('$MODEL','$FAC_A','$ORG_A','Five-year model','2026-10-01');
+ INSERT INTO plan.model_assumption (id,model_id,organisation_id,code,label,numeric_value,is_locked)
+ VALUES ('eeeeeeee-0000-0000-0000-00000000000a','$MODEL','$ORG_A','patientsPerDay','Patients per day',10,true);
+ INSERT INTO plan.model_scenario (id,model_id,organisation_id,scenario_type,name)
+ VALUES ('$SCENARIO','$MODEL','$ORG_A','BASE','Base case');
+ INSERT INTO plan.model_projection
+   (id,scenario_id,organisation_id,period_index,period_start,patient_count,revenue_minor,collections_minor,
+    direct_cost_minor,opex_minor,staff_cost_minor,incentive_minor,surplus_minor,cash_balance_minor,cumulative_surplus_minor)
+ VALUES ('eeeeeeee-0000-0000-0000-00000000000b','$SCENARIO','$ORG_A',0,'2026-10-01',200,40000000,40000000,
+    0,10000000,20000000,0,10000000,10000000,10000000);"
+
+must_fail "a need with no finding and no stated reason is refused" \
+"INSERT INTO plan.need (id,organisation_id,facility_id,reference,title)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','N-9001','Unexplained need');"
+
+must_succeed "a need with no finding but a stated reason is accepted" \
+"INSERT INTO plan.need (id,organisation_id,facility_id,reference,title,unlinked_reason)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','N-9002','Regulator-imposed requirement',
+         'Imposed by the state health board in its August inspection letter.');"
+
+must_fail "a CAPEX line whose estimate disagrees with quantity x rate is refused" \
+"INSERT INTO plan.capex_line (id,capex_plan_id,organisation_id,facility_id,category,description,quantity,unit_cost_minor,estimated_cost_minor)
+ VALUES (gen_random_uuid(),'$PLAN','$ORG_A','$FAC_A','EQUIPMENT','Two beds',2,500000,900000);"
+
+must_succeed "a CAPEX line whose estimate agrees is accepted" \
+"INSERT INTO plan.capex_line (id,capex_plan_id,organisation_id,facility_id,category,description,quantity,unit_cost_minor,estimated_cost_minor)
+ VALUES ('eeeeeeee-0000-0000-0000-00000000000c','$PLAN','$ORG_A','$FAC_A','EQUIPMENT','Two beds',2,500000,1000000);"
+
+must_fail "a CAPEX line cannot be approved without an approver" \
+"UPDATE plan.capex_line SET status='APPROVED' WHERE id='eeeeeeee-0000-0000-0000-00000000000c';"
+
+must_fail "a locked assumption cannot be changed" \
+"UPDATE plan.model_assumption SET numeric_value=25 WHERE id='eeeeeeee-0000-0000-0000-00000000000a';"
+
+must_fail "a locked assumption cannot be deleted instead" \
+"DELETE FROM plan.model_assumption WHERE id='eeeeeeee-0000-0000-0000-00000000000a';"
+
+must_succeed "a locked assumption's rationale can still be recorded" \
+"UPDATE plan.model_assumption SET rationale='Counted over four weeks of the register.'
+ WHERE id='eeeeeeee-0000-0000-0000-00000000000a';"
+
+must_fail "a projected period cannot be hand-edited" \
+"UPDATE plan.model_projection SET revenue_minor=99999999 WHERE id='eeeeeeee-0000-0000-0000-00000000000b';"
+
+must_fail "a risk score that disagrees with its own inputs is refused" \
+"INSERT INTO qual.risk (id,organisation_id,facility_id,reference,title,likelihood,impact,risk_score)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','RISK-9001','Mis-scored risk',3,4,20);"
+
+must_fail "a likelihood outside the 1-5 scale is refused" \
+"INSERT INTO qual.risk (id,organisation_id,facility_id,reference,title,likelihood,impact,risk_score)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','RISK-9002','Off-scale risk',7,4,28);"
+
+must_fail "a working capital total that disagrees with its components is refused" \
+"INSERT INTO plan.working_capital_plan (id,capex_plan_id,organisation_id,facility_id,opening_stock_minor,staff_costs_minor,utilities_minor,contingency_minor,total_minor)
+ VALUES (gen_random_uuid(),'$PLAN','$ORG_A','$FAC_A',1000000,2000000,500000,250000,9000000);"
+echo
 echo "=== Row-level security (ADR 0005) ==="
 echo "  (run as chc_app, which does NOT bypass RLS)"
 

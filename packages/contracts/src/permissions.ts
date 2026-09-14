@@ -223,7 +223,16 @@ export const ROLE_TEMPLATES: Record<RoleCode, { name: string; description: strin
       'baseline.seal',
       'evidence.verify',
       'assessment.verify',
+      // A partnership is a commercial and legal arrangement, not a planning
+      // artefact, so drafting one sits with the administrator alongside the
+      // contract permissions rather than with the project manager.
+      'partnership.write',
       'financial_model.approve',
+      // Unlocking an approved model belongs with the person who approved it,
+      // not the modeller. It supersedes the approved version rather than
+      // editing it, and the new version still needs a second approver — so a
+      // single administrator cannot approve, unlock and re-approve alone.
+      'financial_model.unlock',
       'proposal.approve',
       'contract.draft',
       'contract.execute',
@@ -301,6 +310,7 @@ export const ROLE_TEMPLATES: Record<RoleCode, { name: string; description: strin
       'capex.read',
       'capex.write',
       'financial_model.read',
+      'financial_model.write',
       'partnership.read',
       'proposal.read',
       'proposal.write',
