@@ -61,7 +61,8 @@ its full revitalisation history, read-only, because the baseline is immutable.
 | ORM | Prisma 6 for writes; hand-written SQL for analytics |
 | Cache / queue | Redis 7 + BullMQ |
 | Frontend | React 19 + Vite, installable PWA |
-| Offline | Dexie / IndexedDB with AES-GCM field encryption |
+| Styling | Native HTML elements + CSS tokens (ADR 0006) — 2.3 kB gzipped |
+| Offline | Dexie / IndexedDB with AES-GCM record encryption |
 | Storage | S3-compatible (MinIO self-hosted) |
 | Documents | Playwright Chromium (PDF), docxtemplater (DOCX for legal drafts) |
 | AI | Claude, behind a provider interface, read-only analytics role |
@@ -76,7 +77,7 @@ Rationale for every choice: [`docs/architecture/01-technology-stack.md`](docs/ar
 ```
 apps/
   api/                NestJS API + workers + Prisma schema and migrations
-  web/                React PWA (not yet started — Release 1 UI)
+  web/                React PWA — offline field capture, encrypted local store
 packages/
   contracts/          Zod schemas, shared types, permission catalogue, money helpers
   config/             shared tsconfig / eslint / prettier
@@ -131,7 +132,25 @@ bash apps/api/scripts/run-local.sh
 # In another shell, exercise the whole chain against the running API:
 bash apps/api/scripts/smoke-auth.sh         # 24 checks
 bash apps/api/scripts/smoke-assessment.sh   # 39 checks
+
+# The field app, and the offline proof:
+npm run dev --workspace @chc/web            # http://127.0.0.1:5173
+API_TARGET=http://127.0.0.1:3100 npm run test:e2e --workspace @chc/web
 ```
+
+### What the offline suite proves
+
+Acceptance criterion N, on a Pixel 7 profile against a real API and PostgreSQL:
+
+| Asserted |
+|---|
+| An assessor signs in, opens an assessment, and **loses signal** |
+| The app says it is offline rather than silently degrading |
+| Questions are answered with no network at all |
+| A reload lands on a lock screen that shows the unsynced count *before* unlocking |
+| The password unlocks the encrypted store and restores the session |
+| Signal returns and the queue drains on its own, with no user action |
+| An assessment never opened on this device explains that, rather than spinning |
 
 ```bash
 npm run dev                # API + web in watch mode
@@ -182,8 +201,8 @@ Twelve controlled releases, defined in
 | | Release | Status |
 |---|---|---|
 | 0 | Architecture, schema, security baseline | **complete** — 28 invariants verified against a real PostgreSQL |
-| 1 | Foundation — auth, org, facility, users, roles, audit | **server complete** — 24 checks verified end to end |
-| 2 | Field assessment, evidence, baseline | **server complete** — 39 checks verified end to end |
+| 1 | Foundation — auth, org, facility, users, roles, audit | **complete** — 24 checks verified end to end |
+| 2 | Field assessment, evidence, baseline | **complete** — 39 API checks + 3 offline E2E specs |
 | 3 | Planning — needs, CAPEX, risk, financial model | |
 | 4 | Partnership — revenue models, capital recovery | |
 | 5 | Documents — proposal, letters, MOU, reports | |
@@ -194,10 +213,9 @@ Twelve controlled releases, defined in
 | 10 | Analytics — dashboards, comparisons, forecasting | |
 | 11 | AI — assistant, anomaly detection, predictive analytics | |
 
-**No web client exists yet.** Releases 1 and 2 are complete and verified on the server, but neither
-meets its own Definition of Done until the PWA lands (criterion 7, responsive UI; criterion 8,
-offline support). The API is built for it — client-generated ids, batched writes, idempotent
-evidence registration — but the field app itself is not written.
+The field PWA ships with Release 2: encrypted offline store, dependency-ordered outbox, a lock
+screen, and an always-visible sync status strip. Acceptance criterion N ("the system can operate
+offline") is verified on a Pixel 7 profile against a real API and database.
 
 A release ships only when it satisfies all nine Definition-of-Done criteria (migrations, validation,
 permissions, audit, tests, error handling, responsive UI, offline where required, documentation).
