@@ -124,13 +124,23 @@ export class DocumentIncompleteError extends BusinessRuleError {
 }
 
 export class ConsentRequiredError extends BusinessRuleError {
-  constructor(purpose: string) {
+  /**
+   * Pass a purpose to get the standard sentence, or a full explanation when
+   * the caller has a better one — several purposes at once, or why this
+   * particular consent cannot be switched off. Wrapping an explanation inside
+   * the standard sentence produced text nobody could read.
+   */
+  constructor(purposeOrDetail: string, options: { isDetail?: boolean } = {}) {
+    const isDetail = options.isDetail ?? purposeOrDetail.trim().split(/\s+/).length > 4;
+
     super(
       'consent-required',
       'Consent required',
-      `No current consent is recorded for "${purpose}". Record consent before proceeding.`,
+      isDetail
+        ? purposeOrDetail
+        : `No current consent is recorded for "${purposeOrDetail}". Record consent before proceeding.`,
       HttpStatus.FORBIDDEN,
-      { purpose },
+      isDetail ? undefined : { purpose: purposeOrDetail },
     );
   }
 }

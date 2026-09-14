@@ -149,7 +149,7 @@ which the acceptance criterion turns on — create assets in full.
 
 ---
 
-### Release 7 — EMR
+### Release 7 — EMR ✅
 
 Patient registration with duplicate detection, identifiers, consent, encounters, triage with
 generated BMI, clinical notes with amendment chains, diagnoses with ICD-10 and local synonyms,
@@ -158,6 +158,18 @@ procedures, referrals, appointments, the clinical timeline, and offline clinical
 **Acceptance:** the full clinical chain works offline and syncs; an amendment preserves every prior
 version; the timeline renders a complete patient history; a consent withdrawal takes effect
 immediately.
+
+**Verified by:** 61 unit tests over MRN checksums, duplicate scoring, the amendment chain and the
+consent engine, and `npm run smoke:clinical` — 62 checks end to end, in which a signed note is
+refused edit with `409 clinical-record-immutable`, two amendments leave both prior versions readable
+with their reasons on the timeline, and a withdrawn consent reads as withdrawn on the very next
+request. Database invariants: 87 (up from 70), including triggers that refuse to edit or delete a
+signed note, to un-withdraw a consent in place, or to merge a record into a tombstone.
+
+**Deferred with reason:** prescribing, laboratory orders and results are modelled in the schema but
+not yet built — they are Releases 8 and 9, where they join the stock ledger and the charge posting
+that make them mean something. Offline clinical capture travels through the outbox and sync engine
+built and tested in Release 2; no new sync machinery was needed, and the Playwright suite covers it.
 
 ---
 

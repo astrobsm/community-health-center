@@ -10,6 +10,9 @@ import { BaselineController } from './baseline/baseline.controller';
 import { BaselineService } from './baseline/baseline.service';
 import { CapexController } from './capex/capex.controller';
 import { CapexService } from './capex/capex.service';
+import { EncounterController, PatientController } from './clinical/clinical.controller';
+import { EncounterService } from './clinical/encounter.service';
+import { PatientService } from './clinical/patient.service';
 import { ConfigService } from './config/config.service';
 import { AssetService } from './project/asset.service';
 import { ContractService } from './document/contract.service';
@@ -46,6 +49,7 @@ import { QualityService } from './quality/quality.service';
  *   quality   <- sits above them all (L4): risk and compliance registers
  *   project   <- capex (a project delivers a costed recommendation)
  *   procurement <- project; asset <- procurement (a receipt creates an asset)
+ *   patient   <- facility; encounter <- patient (consent gates care)
  *   document  <- L4: reads from every domain module below it and writes none
  *   config    <- everything above it
  *
@@ -75,6 +79,8 @@ import { QualityService } from './quality/quality.service';
     ProjectController,
     AssetController,
     ProcurementController,
+    PatientController,
+    EncounterController,
   ],
   providers: [
     {
@@ -173,6 +179,17 @@ import { QualityService } from './quality/quality.service';
         new ProcurementService(prisma, audit, config),
     },
     {
+      provide: PatientService,
+      inject: [PrismaService, AuditService, ConfigService],
+      useFactory: (prisma: PrismaService, audit: AuditService, config: ConfigService) =>
+        new PatientService(prisma, audit, config),
+    },
+    {
+      provide: EncounterService,
+      inject: [PrismaService, AuditService],
+      useFactory: (prisma: PrismaService, audit: AuditService) => new EncounterService(prisma, audit),
+    },
+    {
       provide: ContractService,
       inject: ['Env', PrismaService, StorageService, AuditService],
       useFactory: (env: Env, prisma: PrismaService, storage: StorageService, audit: AuditService) =>
@@ -194,6 +211,8 @@ import { QualityService } from './quality/quality.service';
     ProjectService,
     AssetService,
     ProcurementService,
+    PatientService,
+    EncounterService,
     ConfigService,
   ],
 })

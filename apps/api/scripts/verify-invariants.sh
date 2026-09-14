@@ -427,6 +427,88 @@ must_succeed "a payment unrelated to any supplier invoice is unaffected" \
  VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','PAY-T0003','INBOUND',5000,'CASH');"
 
 echo
+echo
+echo "=== Clinical: what a later clinician can rely on (spec section 43) ==="
+
+CPATIENT=eeeeeeee-2222-0000-0000-000000000001
+CPATIENT2=eeeeeeee-2222-0000-0000-000000000002
+CENCOUNTER=eeeeeeee-2222-0000-0000-000000000003
+CNOTE=eeeeeeee-2222-0000-0000-000000000004
+CDRAFT=eeeeeeee-2222-0000-0000-000000000005
+CCONSENT=eeeeeeee-2222-0000-0000-000000000006
+CDIAG=eeeeeeee-2222-0000-0000-000000000007
+
+must_succeed "clinical fixtures load" \
+"INSERT INTO clinical.patient (id,facility_id,organisation_id,mrn,given_name,family_name)
+ VALUES ('$CPATIENT','$FAC_A','$ORG_A','IKM-9000001','Ada','Chukwu');
+ INSERT INTO clinical.patient (id,facility_id,organisation_id,mrn,given_name,family_name)
+ VALUES ('$CPATIENT2','$FAC_A','$ORG_A','IKM-9000002','Adaeze','Chukwu');
+ INSERT INTO clinical.encounter (id,patient_id,facility_id,organisation_id,reference)
+ VALUES ('$CENCOUNTER','$CPATIENT','$FAC_A','$ORG_A','ENC-9000001');
+ INSERT INTO clinical.clinical_note (id,encounter_id,organisation_id,facility_id,status,assessment,signed_at)
+ VALUES ('$CNOTE','$CENCOUNTER','$ORG_A','$FAC_A','SIGNED','Malaria',now());
+ INSERT INTO clinical.clinical_note (id,encounter_id,organisation_id,facility_id,status,assessment)
+ VALUES ('$CDRAFT','$CENCOUNTER','$ORG_A','$FAC_A','DRAFT','Still typing');
+ INSERT INTO clinical.patient_consent (id,patient_id,organisation_id,facility_id,purpose,granted)
+ VALUES ('$CCONSENT','$CPATIENT','$ORG_A','$FAC_A','SMS_CONTACT',true);
+ INSERT INTO clinical.diagnosis (id,encounter_id,organisation_id,facility_id,description,diagnosis_type)
+ VALUES ('$CDIAG','$CENCOUNTER','$ORG_A','$FAC_A','Malaria','PROVISIONAL');"
+
+must_fail "a signed note cannot be edited" \
+"UPDATE clinical.clinical_note SET assessment='Typhoid' WHERE id='$CNOTE';"
+
+must_fail "nor can its author be changed" \
+"UPDATE clinical.clinical_note SET author_staff_id=gen_random_uuid() WHERE id='$CNOTE';"
+
+must_succeed "a draft can be edited freely" \
+"UPDATE clinical.clinical_note SET assessment='Still typing, now with more detail' WHERE id='$CDRAFT';"
+
+must_succeed "a signed note can be marked superseded, and nothing else" \
+"UPDATE clinical.clinical_note SET status='AMENDED' WHERE id='$CNOTE';"
+
+must_fail "a clinical note is never deleted" \
+"DELETE FROM clinical.clinical_note WHERE id='$CNOTE';"
+
+must_fail "an amendment with no reason is refused" \
+"INSERT INTO clinical.clinical_note (id,encounter_id,organisation_id,facility_id,status,assessment,signed_at,amends_id)
+ VALUES (gen_random_uuid(),'$CENCOUNTER','$ORG_A','$FAC_A','SIGNED','Typhoid',now(),'$CNOTE');"
+
+must_succeed "an amendment with a reason is accepted" \
+"INSERT INTO clinical.clinical_note (id,encounter_id,organisation_id,facility_id,status,assessment,signed_at,amends_id,amendment_reason)
+ VALUES (gen_random_uuid(),'$CENCOUNTER','$ORG_A','$FAC_A','SIGNED','Typhoid',now(),'$CNOTE','Blood film was negative; the widal test came back positive.');"
+
+must_fail "a signed note with no signature time is refused" \
+"INSERT INTO clinical.clinical_note (id,encounter_id,organisation_id,facility_id,status,assessment)
+ VALUES (gen_random_uuid(),'$CENCOUNTER','$ORG_A','$FAC_A','SIGNED','No signature time');"
+
+must_fail "a diagnosis amendment with no reason is refused" \
+"INSERT INTO clinical.diagnosis (id,encounter_id,organisation_id,facility_id,description,diagnosis_type,amends_id)
+ VALUES (gen_random_uuid(),'$CENCOUNTER','$ORG_A','$FAC_A','Typhoid','CONFIRMED','$CDIAG');"
+
+must_fail "a diagnosis is never deleted" \
+"DELETE FROM clinical.diagnosis WHERE id='$CDIAG';"
+
+must_fail "a patient cannot be merged into themselves" \
+"UPDATE clinical.patient SET merged_into_id='$CPATIENT' WHERE id='$CPATIENT';"
+
+must_succeed "one patient can be merged into another" \
+"UPDATE clinical.patient SET merged_into_id='$CPATIENT' WHERE id='$CPATIENT2';"
+
+must_fail "but not into a record that has itself been merged" \
+"INSERT INTO clinical.patient (id,facility_id,organisation_id,mrn,given_name,family_name,merged_into_id)
+ VALUES (gen_random_uuid(),'$FAC_A','$ORG_A','IKM-9000003','Adaobi','Chukwu','$CPATIENT2');"
+
+must_succeed "a consent can be withdrawn" \
+"UPDATE clinical.patient_consent SET withdrawn_at=now() WHERE id='$CCONSENT';"
+
+must_fail "a withdrawal cannot be quietly undone" \
+"UPDATE clinical.patient_consent SET withdrawn_at=NULL WHERE id='$CCONSENT';"
+
+must_fail "a withdrawal cannot predate the consent it withdraws" \
+"INSERT INTO clinical.patient_consent (id,patient_id,organisation_id,facility_id,purpose,granted,granted_at,withdrawn_at)
+ VALUES (gen_random_uuid(),'$CPATIENT','$ORG_A','$FAC_A','PHOTOGRAPH',true,'2026-09-10','2026-09-01');"
+
+echo
 echo "=== Row-level security (ADR 0005) ==="
 echo "  (run as chc_app, which does NOT bypass RLS)"
 
@@ -434,9 +516,11 @@ rls() {
   docker exec -e PGPASSWORD=apppw "$CONTAINER" psql -v ON_ERROR_STOP=1 -U chc_app -h 127.0.0.1 -d "$PGDATABASE" -tAq -c "$1" 2>&1
 }
 
+# Asserted as "at least one" rather than an exact count: the property under test
+# is visibility, and a fixture added later must not fail it.
 out=$(rls "BEGIN; SET LOCAL app.current_org = '$ORG_A'; SET LOCAL app.current_facilities = '$FAC_A'; SELECT count(*) FROM clinical.patient; COMMIT;")
-if [ "$(printf '%s' "$out" | tr -d '[:space:]')" = "1" ]; then
-  PASS=$((PASS + 1)); printf '  PASS  in-scope read returns the row\n'
+if [ "$(printf '%s' "$out" | tr -d '[:space:]')" -ge 1 ] 2>/dev/null; then
+  PASS=$((PASS + 1)); printf '  PASS  in-scope read returns rows\n'
 else
   FAIL=$((FAIL + 1)); printf '  FAIL  in-scope read returned: %s\n' "$out"
 fi

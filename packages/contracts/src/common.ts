@@ -123,6 +123,7 @@ export const BusinessErrorCode = {
   SMALL_CELL_SUPPRESSED: 'small-cell-suppressed',
   REASON_REQUIRED: 'reason-required',
   DOCUMENT_INCOMPLETE: 'document-incomplete',
+  CLINICAL_RECORD_IMMUTABLE: 'clinical-record-immutable',
 } as const;
 export type BusinessErrorCode = (typeof BusinessErrorCode)[keyof typeof BusinessErrorCode];
 
