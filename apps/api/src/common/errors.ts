@@ -108,6 +108,21 @@ export class ReasonRequiredError extends BusinessRuleError {
   }
 }
 
+export class DocumentIncompleteError extends BusinessRuleError {
+  constructor(
+    detail: string,
+    extra: { threshold: number; completenessPercent: number; gaps: unknown[] },
+  ) {
+    super(
+      'document-incomplete',
+      'Document is not complete enough to submit',
+      detail,
+      HttpStatus.UNPROCESSABLE_ENTITY,
+      extra,
+    );
+  }
+}
+
 export class ConsentRequiredError extends BusinessRuleError {
   constructor(purpose: string) {
     super(

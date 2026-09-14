@@ -11,6 +11,10 @@ import { BaselineService } from './baseline/baseline.service';
 import { CapexController } from './capex/capex.controller';
 import { CapexService } from './capex/capex.service';
 import { ConfigService } from './config/config.service';
+import { ContractService } from './document/contract.service';
+import { DocumentContextService } from './document/document-context.service';
+import { ContractController, DocumentController } from './document/document.controller';
+import { DocumentService } from './document/document.service';
 import { EvidenceController } from './evidence/evidence.controller';
 import { EvidenceService } from './evidence/evidence.service';
 import { StorageService } from './evidence/storage.service';
@@ -35,6 +39,7 @@ import { QualityService } from './quality/quality.service';
  *   capex     <- needs
  *   partnership <- financial-model (the terms are negotiated against a model)
  *   quality   <- sits above them all (L4): risk and compliance registers
+ *   document  <- L4: reads from every domain module below it and writes none
  *   config    <- everything above it
  *
  * `baseline` depends on `evidence` (it must know what is still uploading) but
@@ -58,6 +63,8 @@ import { QualityService } from './quality/quality.service';
     ComplianceController,
     FinancialModelController,
     PartnershipController,
+    DocumentController,
+    ContractController,
   ],
   providers: [
     {
@@ -122,6 +129,29 @@ import { QualityService } from './quality/quality.service';
       inject: [PrismaService, AuditService],
       useFactory: (prisma: PrismaService, audit: AuditService) => new PartnershipService(prisma, audit),
     },
+    {
+      provide: DocumentContextService,
+      inject: [PrismaService],
+      useFactory: (prisma: PrismaService) => new DocumentContextService(prisma),
+    },
+    {
+      provide: DocumentService,
+      inject: ['Env', PrismaService, DocumentContextService, StorageService, AuditService, ConfigService],
+      useFactory: (
+        env: Env,
+        prisma: PrismaService,
+        context: DocumentContextService,
+        storage: StorageService,
+        audit: AuditService,
+        config: ConfigService,
+      ) => new DocumentService(env, prisma, context, storage, audit, config),
+    },
+    {
+      provide: ContractService,
+      inject: ['Env', PrismaService, StorageService, AuditService],
+      useFactory: (env: Env, prisma: PrismaService, storage: StorageService, audit: AuditService) =>
+        new ContractService(env, prisma, storage, audit),
+    },
   ],
   exports: [
     FacilityService,
@@ -133,6 +163,8 @@ import { QualityService } from './quality/quality.service';
     QualityService,
     FinancialModelService,
     PartnershipService,
+    DocumentService,
+    ContractService,
     ConfigService,
   ],
 })

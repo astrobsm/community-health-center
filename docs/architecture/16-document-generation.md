@@ -40,6 +40,16 @@ WORKFLOW                DRAFT → REVIEW → REVISION → APPROVAL → APPROVED 
 Generation runs in a BullMQ worker. A 40-page proposal with charts takes seconds to tens of seconds;
 that must never block a request thread.
 
+**As built (Release 5).** RESOLVE, VALIDATE, RENDER, STAMP, STORE and WORKFLOW are implemented and
+run synchronously: assembling HTML from resolved queries is fast enough to do so. PRODUCE is not —
+the artefact is HTML rather than PDF or DOCX, and the queued worker is not yet built. The generation
+response states the format it produced, so nothing implies a PDF exists. The print CSS carries the
+banner and page furniture, so the printed form is governed by the same rules the PDF path will be.
+
+Document types whose source data belongs to a later release are refused by name, saying which
+release provides them. Generating an empty forty-page proposal would be worse than refusing:
+somebody would send it.
+
 ---
 
 ## 3. Missing data is shown, never filled

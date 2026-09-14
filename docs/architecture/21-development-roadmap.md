@@ -101,7 +101,7 @@ government entitlement is byte-for-byte what it was. Database invariants: 54 (up
 
 ---
 
-### Release 5 — Documents
+### Release 5 — Documents ✅
 
 Document generation engine, provenance stamping, version control workflow, the seventeen document
 types, letter generator, MOU generator with the mandatory draft banner, approval workflow.
@@ -109,6 +109,20 @@ types, letter generator, MOU generator with the mandatory draft banner, approval
 **Acceptance:** a full proposal generates from real data with every figure classified; missing data
 renders as an explicit gap and blocks submission; an approved version cannot be modified; the MOU
 carries the draft banner on every page.
+
+**Verified by:** 47 unit tests over the gap, classification, hashing and merge engines, and
+`npm run smoke:documents` — 63 checks end to end, in which a proposal with nothing behind it renders
+four explicit gaps and is refused at submission with `422 document-incomplete`, a capital plan
+generated from a real costed line carries a classification on every figure and a verifiable content
+hash, the database refuses to alter the approved version, regenerating supersedes it while leaving
+it retrievable, and an MOU assembled from the configured waterfall carries the draft banner on every
+section until the signed file and two signatories are recorded.
+
+**Deferred with reason:** PDF and DOCX production. The rendered artefact is HTML, stored in object
+storage and hashed; the print CSS carries the banner and page furniture. Producing PDF through
+headless Chromium and DOCX through docxtemplater needs the queued worker of doc 16 §2, because a
+synchronous browser render inside a request thread would block it for tens of seconds. Every
+generation response states the format it produced rather than implying a PDF exists.
 
 ---
 

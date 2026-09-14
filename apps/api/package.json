@@ -32,7 +32,8 @@
     "create:user": "tsx prisma/seed/create-user.ts",
     "smoke:assessment": "bash scripts/smoke-assessment.sh",
     "smoke:planning": "bash scripts/smoke-planning.sh",
-    "smoke:partnership": "bash scripts/smoke-partnership.sh"
+    "smoke:partnership": "bash scripts/smoke-partnership.sh",
+    "smoke:documents": "bash scripts/smoke-documents.sh"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1131.0",

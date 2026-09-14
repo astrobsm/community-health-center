@@ -122,6 +122,7 @@ export const BusinessErrorCode = {
   OFFLINE_LIMIT_REACHED: 'offline-limit-reached',
   SMALL_CELL_SUPPRESSED: 'small-cell-suppressed',
   REASON_REQUIRED: 'reason-required',
+  DOCUMENT_INCOMPLETE: 'document-incomplete',
 } as const;
 export type BusinessErrorCode = (typeof BusinessErrorCode)[keyof typeof BusinessErrorCode];
 

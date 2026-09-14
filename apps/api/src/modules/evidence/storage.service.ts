@@ -99,6 +99,41 @@ export class StorageService {
   }
 
   /**
+   * Write an object the server generated itself.
+   *
+   * Evidence arrives from a device through a pre-signed URL, because the bytes
+   * never pass through the API. A generated document is the opposite case: the
+   * server produced it, so it writes it directly and there is no window in
+   * which a record exists for a file nobody uploaded.
+   */
+  async putObject(params: {
+    bucket: string;
+    key: string;
+    body: string | Uint8Array;
+    contentType: string;
+  }): Promise<{ key: string; sizeBytes: number }> {
+    const body = typeof params.body === 'string' ? Buffer.from(params.body, 'utf8') : params.body;
+
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: params.bucket,
+        Key: params.key,
+        Body: body,
+        ContentType: params.contentType,
+        ...(this.env.STORAGE_SERVER_SIDE_ENCRYPTION ? { ServerSideEncryption: 'AES256' as const } : {}),
+      }),
+    );
+
+    return { key: params.key, sizeBytes: body.byteLength };
+  }
+
+  /** Read back an object this service wrote. */
+  async getObject(bucket: string, key: string): Promise<string> {
+    const result = await this.client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    return (await result.Body?.transformToString('utf8')) ?? '';
+  }
+
+  /**
    * Confirm an object actually arrived, and matches what was declared.
    *
    * Without this, a client could register evidence metadata and never upload,
