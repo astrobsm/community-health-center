@@ -44,6 +44,8 @@ export interface SyncStatus extends OutboxSummary {
   lastSyncAt: string | null;
   lastReport: SyncReport | null;
   mediaPending: number;
+  /** Uploads that failed and are awaiting retry. Never hidden. */
+  mediaFailed: number;
 }
 
 type StatusListener = (status: SyncStatus) => void;
@@ -63,6 +65,7 @@ export function onSyncStatus(listener: StatusListener): () => void {
 async function publish(): Promise<void> {
   const summary = await summarise();
   const mediaPending = await db.media.where('status').notEqual('UPLOADED').count();
+  const mediaFailed = await db.media.where('status').equals('FAILED').count();
 
   const status: SyncStatus = {
     ...summary,
@@ -71,6 +74,7 @@ async function publish(): Promise<void> {
     lastSyncAt,
     lastReport,
     mediaPending,
+    mediaFailed,
   };
 
   for (const listener of listeners) listener(status);
@@ -85,6 +89,7 @@ export async function currentStatus(): Promise<SyncStatus> {
     lastSyncAt,
     lastReport,
     mediaPending: await db.media.where('status').notEqual('UPLOADED').count(),
+    mediaFailed: await db.media.where('status').equals('FAILED').count(),
   };
 }
 

@@ -151,6 +151,9 @@ Acceptance criterion N, on a Pixel 7 profile against a real API and PostgreSQL:
 | The password unlocks the encrypted store and restores the session |
 | Signal returns and the queue drains on its own, with no user action |
 | An assessment never opened on this device explains that, rather than spinning |
+| A photograph is compressed to 1920px WebP, stripping the EXIF a phone embeds silently |
+| Location is attached **only** when the assessor ticks the box |
+| The bytes genuinely reach object storage — asserted against the server's own verification, not against a quiet status bar |
 
 ```bash
 npm run dev                # API + web in watch mode

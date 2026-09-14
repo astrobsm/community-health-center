@@ -23,6 +23,23 @@ export class EvidenceController {
     return this.evidence.create(body);
   }
 
+  /**
+   * Issue a FRESH pre-signed upload URL.
+   *
+   * Essential for offline capture: a pre-signed URL lives 15 minutes, and a
+   * device that registered evidence in a village may not reach a network for a
+   * day. Without this the original URL would have expired and the photograph
+   * could never be uploaded — the evidence record would reference bytes that
+   * never arrive, and a baseline could never be sealed.
+   */
+  @Post(':id/upload-intent')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('evidence.upload')
+  @AuditAction('evidence.upload.intent')
+  uploadIntent(@Param('id') id: string) {
+    return this.evidence.describe(id, { includeUploadUrl: true });
+  }
+
   /** Confirms the bytes arrived and match what was declared. */
   @Post(':id/confirm-upload')
   @HttpCode(HttpStatus.OK)

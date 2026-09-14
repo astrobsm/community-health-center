@@ -61,9 +61,15 @@ function describe(status: SyncStatus, stale: boolean): string {
     return `${waiting} record${waiting === 1 ? '' : 's'} have been waiting ${formatAge(status.staleHours)} — sync soon`;
   }
 
+  // Failures come FIRST. A photograph that failed to upload was previously
+  // invisible behind the pending count, which meant evidence could silently
+  // never arrive — and a baseline referencing it could never be sealed.
+  if (status.mediaFailed > 0) {
+    return `${status.mediaFailed} photo${status.mediaFailed === 1 ? '' : 's'} failed to upload — retrying`;
+  }
+  if (status.rejected > 0) return `${status.rejected} record${status.rejected === 1 ? '' : 's'} were rejected`;
   if (waiting > 0) return `${waiting} record${waiting === 1 ? '' : 's'} waiting to sync`;
   if (status.mediaPending > 0) return `Uploading ${status.mediaPending} photo${status.mediaPending === 1 ? '' : 's'}…`;
-  if (status.rejected > 0) return `${status.rejected} record${status.rejected === 1 ? '' : 's'} were rejected`;
 
   return status.lastSyncAt ? `Synced ${formatRelative(status.lastSyncAt)}` : 'Online';
 }

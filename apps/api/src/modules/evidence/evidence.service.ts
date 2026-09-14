@@ -247,7 +247,10 @@ export class EvidenceService {
     let downloadUrl: string | undefined;
 
     if (media && this.storage.configured) {
-      if (options.includeUploadUrl && media.mediaStatus === 'PENDING_UPLOAD') {
+      // FAILED is included deliberately: a retry after an interrupted upload is
+      // the normal case on a weak link, and refusing a fresh URL would strand
+      // the evidence permanently.
+      if (options.includeUploadUrl && (media.mediaStatus === 'PENDING_UPLOAD' || media.mediaStatus === 'FAILED')) {
         const presigned = await this.storage.presignUpload({
           bucket: this.env.STORAGE_BUCKET_EVIDENCE,
           key: media.storageKey,

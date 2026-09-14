@@ -1,5 +1,6 @@
 import { seal } from './crypto';
 import { db, nextSequence, deviceId, type OutboxEntry } from './db';
+import { orderForSend } from './ordering';
 
 /**
  * The outbox (doc 09 §3).
@@ -93,51 +94,24 @@ export async function summarise(): Promise<OutboxSummary> {
 /**
  * Entries ready to send, in dependency order.
  *
- * Topologically sorted, then by monotonic sequence. An entry whose dependency
- * has not yet synced is HELD BACK rather than sent and rejected — the server
- * would answer 404 for a parent that does not exist yet, and the retry would
- * look like a permanent failure.
- *
- * A dependency cycle cannot arise from the app's own writes, but if one ever
- * did, the remaining entries are returned in sequence order rather than
- * silently dropped.
+ * The scheduling rule is in `ordering.ts`; this function only supplies it with
+ * what is in the database.
  */
 export async function readyToSend(limit = 50): Promise<OutboxEntry[]> {
   const now = Date.now();
 
-  const candidates = (await db.outbox.where('status').anyOf('PENDING', 'CONFLICT').toArray())
-    .filter((entry) => entry.status === 'PENDING')
-    .filter((entry) => !entry.nextAttemptAt || entry.nextAttemptAt <= now)
-    .sort((a, b) => a.monotonicSeq - b.monotonicSeq);
+  const candidates = (await db.outbox.where('status').equals('PENDING').toArray()).filter(
+    (entry) => !entry.nextAttemptAt || entry.nextAttemptAt <= now,
+  );
 
   const synced = new Set(
     (await db.outbox.where('status').equals('SYNCED').primaryKeys()) as string[],
   );
-  const available = new Set(candidates.map((entry) => entry.id));
 
-  const ordered: OutboxEntry[] = [];
-  const emitted = new Set<string>();
-
-  const canEmit = (entry: OutboxEntry): boolean =>
-    entry.dependsOn.every((dep) => synced.has(dep) || emitted.has(dep) || !available.has(dep));
-
-  // Repeatedly take whatever is unblocked. O(n²) worst case, but n is the batch
-  // size and this runs once per sync.
-  let progressed = true;
-  while (progressed && ordered.length < limit) {
-    progressed = false;
-    for (const entry of candidates) {
-      if (emitted.has(entry.id)) continue;
-      if (!canEmit(entry)) continue;
-
-      ordered.push(entry);
-      emitted.add(entry.id);
-      progressed = true;
-      if (ordered.length >= limit) break;
-    }
-  }
-
-  return ordered;
+  // The ordering rule itself lives in ordering.ts, pure and exhaustively
+  // tested — including the cases that are hard to reach through IndexedDB,
+  // like a dependency cycle or a parent cut off by the batch limit.
+  return orderForSend({ candidates, synced, limit });
 }
 
 /** Exponential backoff with a ceiling, so a device offline for a week is not hammering. */

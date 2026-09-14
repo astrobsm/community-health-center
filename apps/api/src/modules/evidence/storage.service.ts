@@ -68,7 +68,10 @@ export class StorageService {
       Key: params.key,
       ContentType: params.contentType,
       ContentLength: params.contentLength,
-      ServerSideEncryption: 'AES256',
+      // Signed only when enabled: the header is part of the signature, so a
+      // backend that does not support SSE-S3 rejects the PUT outright. MinIO
+      // answers 501 without a KMS.
+      ...(this.env.STORAGE_SERVER_SIDE_ENCRYPTION ? { ServerSideEncryption: 'AES256' as const } : {}),
     });
 
     const ttl = this.env.STORAGE_PRESIGN_TTL_SECONDS;
@@ -76,8 +79,14 @@ export class StorageService {
 
     return {
       url,
-      // The client must send these verbatim; the signature covers them.
-      headers: { 'Content-Type': params.contentType, 'x-amz-server-side-encryption': 'AES256' },
+      // The client must send these verbatim; the signature covers them, so an
+      // extra or missing header fails the upload.
+      headers: {
+        'Content-Type': params.contentType,
+        ...(this.env.STORAGE_SERVER_SIDE_ENCRYPTION
+          ? { 'x-amz-server-side-encryption': 'AES256' }
+          : {}),
+      },
       expiresAt: new Date(Date.now() + ttl * 1000),
     };
   }

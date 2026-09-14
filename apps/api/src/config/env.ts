@@ -62,6 +62,14 @@ export const envSchema = z
     STORAGE_BUCKET_DOCUMENTS: z.string().default('chc-documents'),
     STORAGE_FORCE_PATH_STYLE: booleanish.default(true),
     STORAGE_PRESIGN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
+    /**
+     * Server-side encryption at rest (doc 18 §3).
+     *
+     * Required in production. Off by default locally because MinIO answers
+     * 501 Not Implemented for SSE-S3 unless a KMS is configured, and a
+     * developer should not have to run one to test an upload.
+     */
+    STORAGE_SERVER_SIDE_ENCRYPTION: booleanish.default(false),
 
     AI_ENABLED: booleanish.default(false),
 
@@ -100,6 +108,14 @@ export const envSchema = z
           path: ['ALLOW_DEMO_FIXTURES'],
           message:
             'ALLOW_DEMO_FIXTURES must be false in production. Fabricated clinical or financial records must never exist in a live facility.',
+        });
+      }
+      if (!env.STORAGE_SERVER_SIDE_ENCRYPTION) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['STORAGE_SERVER_SIDE_ENCRYPTION'],
+          message:
+            'STORAGE_SERVER_SIDE_ENCRYPTION must be true in production: evidence and documents must be encrypted at rest.',
         });
       }
       if (!env.STRICT_CLASSIFICATION) {

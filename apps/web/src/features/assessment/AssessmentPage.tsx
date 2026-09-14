@@ -7,6 +7,8 @@ import { getCached, putCached, storagePressure } from '@/lib/offline/db';
 import { enqueue } from '@/lib/offline/outbox';
 import { sync } from '@/lib/offline/sync';
 
+import { EvidenceCapture } from '@/features/evidence/EvidenceCapture';
+
 import { ItemInput, type ItemValue, type TemplateItem } from './ItemInput';
 
 interface Section {
@@ -59,6 +61,8 @@ export function AssessmentPage(): JSX.Element {
   const [activeSection, setActiveSection] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [pressureWarning, setPressureWarning] = useState<string | null>(null);
+  /** The item currently having evidence attached, if any. */
+  const [capturingFor, setCapturingFor] = useState<TemplateItem | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -227,6 +231,29 @@ export function AssessmentPage(): JSX.Element {
         })}
       </nav>
 
+      {capturingFor && (
+        <EvidenceCapture
+          facilityId={payload.assessment.facilityId}
+          context={capturingFor.question}
+          defaultStage="BASELINE"
+          onCaptured={(evidenceId) => {
+            // Re-save the answer with the evidence attached, so the item stops
+            // owing evidence immediately rather than at the next sync.
+            const item = capturingFor;
+            const existing = values[item.id] ?? {
+              answer: null,
+              notApplicable: false,
+              evidenceIds: [],
+            };
+            void saveAnswer(item, {
+              ...existing,
+              evidenceIds: [...existing.evidenceIds, evidenceId],
+            });
+          }}
+          onClose={() => setCapturingFor(null)}
+        />
+      )}
+
       {section && (
         <section className="card">
           <h2>{section.name}</h2>
@@ -239,10 +266,7 @@ export function AssessmentPage(): JSX.Element {
                 item={item}
                 value={values[item.id]}
                 onChange={(value) => void saveAnswer(item, value)}
-                onCapture={() => {
-                  /* Evidence capture opens in the evidence flow; wired in
-                     EvidenceCapture, which owns the camera and compression. */
-                }}
+                onCapture={() => setCapturingFor(item)}
               />
             ))}
           </fieldset>
