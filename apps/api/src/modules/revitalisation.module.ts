@@ -20,6 +20,8 @@ import { FinancialModelController } from './financial-model/financial-model.cont
 import { FinancialModelService } from './financial-model/financial-model.service';
 import { NeedController, RecommendationController } from './needs/needs.controller';
 import { NeedsService } from './needs/needs.service';
+import { PartnershipController } from './partnership/partnership.controller';
+import { PartnershipService } from './partnership/partnership.service';
 import { ComplianceController, RiskController } from './quality/quality.controller';
 import { QualityService } from './quality/quality.service';
 
@@ -31,6 +33,7 @@ import { QualityService } from './quality/quality.service';
  *   evidence  <- assessment, baseline
  *   needs     <- assessment (a need cites a finding)
  *   capex     <- needs
+ *   partnership <- financial-model (the terms are negotiated against a model)
  *   quality   <- sits above them all (L4): risk and compliance registers
  *   config    <- everything above it
  *
@@ -54,6 +57,7 @@ import { QualityService } from './quality/quality.service';
     RiskController,
     ComplianceController,
     FinancialModelController,
+    PartnershipController,
   ],
   providers: [
     {
@@ -113,6 +117,11 @@ import { QualityService } from './quality/quality.service';
       inject: [PrismaService, AuditService],
       useFactory: (prisma: PrismaService, audit: AuditService) => new FinancialModelService(prisma, audit),
     },
+    {
+      provide: PartnershipService,
+      inject: [PrismaService, AuditService],
+      useFactory: (prisma: PrismaService, audit: AuditService) => new PartnershipService(prisma, audit),
+    },
   ],
   exports: [
     FacilityService,
@@ -123,6 +132,7 @@ import { QualityService } from './quality/quality.service';
     CapexService,
     QualityService,
     FinancialModelService,
+    PartnershipService,
     ConfigService,
   ],
 })

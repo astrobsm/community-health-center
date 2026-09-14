@@ -519,6 +519,10 @@ model WaterfallStep {
   fixedAmountMinor    BigInt?        @map("fixed_amount_minor")
   capMinor            BigInt?        @map("cap_minor")
   floorMinor          BigInt?        @map("floor_minor")
+  /// Caps this step at the partner's outstanding capital, whatever it is when
+  /// the period is computed. A fixed cap cannot express that: the balance
+  /// falls every time some of it is recovered.
+  isCapitalRecovery   Boolean        @default(false) @map("is_capital_recovery")
   beneficiaryPartyId  String?        @map("beneficiary_party_id") @db.Uuid
   accountCode         String?        @map("account_code")
   notes               String?

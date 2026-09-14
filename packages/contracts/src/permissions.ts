@@ -227,6 +227,11 @@ export const ROLE_TEMPLATES: Record<RoleCode, { name: string; description: strin
       // artefact, so drafting one sits with the administrator alongside the
       // contract permissions rather than with the project manager.
       'partnership.write',
+      // Computing a settlement reads the ledger and applies the agreed terms.
+      // READ_EVERYTHING already exposes every input; withholding the total the
+      // government is owed would protect nothing and would stop the person who
+      // signed the agreement from reporting on it.
+      'partnership.compute_waterfall',
       'financial_model.approve',
       // Unlocking an approved model belongs with the person who approved it,
       // not the modeller. It supersedes the approved version rather than

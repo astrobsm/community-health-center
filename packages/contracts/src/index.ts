@@ -13,3 +13,4 @@ export * from './common.js';
 export * from './auth.js';
 export * from './assessment.js';
 export * from './planning.js';
+export * from './partnership.js';

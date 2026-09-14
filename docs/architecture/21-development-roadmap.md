@@ -83,7 +83,7 @@ invariants behind it are proven separately by `npm run db:test-migrate` (41 chec
 
 ---
 
-### Release 4 — Partnership
+### Release 4 — Partnership ✅
 
 Partnership records, configurable revenue-share models, the ordered waterfall engine, obligations,
 capital recovery tracking, government benefit computation, and partnership monitoring.
@@ -91,6 +91,13 @@ capital recovery tracking, government benefit computation, and partnership monit
 **Acceptance:** three distinct waterfall configurations (surplus share, gross revenue share, hybrid)
 produce correct results against hand-computed fixtures, including cap and floor edge cases; changing
 the model version does not alter a previously computed period.
+
+**Verified by:** 47 unit tests over the engine (`waterfall.spec.ts`) covering all three
+configurations against hand-computed figures, plus zero revenue, a loss-making month, an unaffordable
+floor, a zero cap, double recovery of the same capital, and a conservation property asserted across
+every configuration and ledger combination; and `npm run smoke:partnership` — 57 checks end to end,
+in which September settles on version 1, a version 2 is then agreed from October, and September's
+government entitlement is byte-for-byte what it was. Database invariants: 54 (up from 41).
 
 ---
 

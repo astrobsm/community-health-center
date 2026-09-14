@@ -265,6 +265,71 @@ must_fail "a working capital total that disagrees with its components is refused
 "INSERT INTO plan.working_capital_plan (id,capex_plan_id,organisation_id,facility_id,opening_stock_minor,staff_costs_minor,utilities_minor,contingency_minor,total_minor)
  VALUES (gen_random_uuid(),'$PLAN','$ORG_A','$FAC_A',1000000,2000000,500000,250000,9000000);"
 echo
+echo
+echo "=== Partnership: what each party is owed (spec sections 35, 74) ==="
+
+PSHIP=dddddddd-1111-0000-0000-000000000001
+RSM=dddddddd-1111-0000-0000-000000000002
+PARTY=dddddddd-1111-0000-0000-000000000003
+RECOVERY=dddddddd-1111-0000-0000-000000000004
+
+must_succeed "partnership fixtures load" \
+"INSERT INTO plan.partnership (id,facility_id,organisation_id,name)
+ VALUES ('$PSHIP','$FAC_A','$ORG_A','Ikem revitalisation partnership');
+ INSERT INTO plan.partnership_party (id,partnership_id,organisation_id,party_role,legal_name)
+ VALUES ('$PARTY','$PSHIP','$ORG_A','PARTNER','A Partner Ltd');
+ INSERT INTO plan.revenue_share_model (id,partnership_id,organisation_id,name,share_type,version_number,effective_from,effective_to)
+ VALUES ('$RSM','$PSHIP','$ORG_A','Agreed terms','SURPLUS_SHARE',1,'2026-01-01','2026-12-31');
+ INSERT INTO plan.capital_recovery_event (id,partnership_id,organisation_id,facility_id,event_type,amount_minor,occurred_on,source_payment_id)
+ VALUES ('$RECOVERY','$PSHIP','$ORG_A','$FAC_A','RECOVERY',100000,'2026-06-01',NULL);"
+
+must_fail "a share step with no rate is refused" \
+"INSERT INTO plan.waterfall_step (id,revenue_share_model_id,organisation_id,sequence,label,basis)
+ VALUES (gen_random_uuid(),'$RSM','$ORG_A',1,'Government entitlement','OPERATING_SURPLUS');"
+
+must_fail "a fixed step with no amount is refused" \
+"INSERT INTO plan.waterfall_step (id,revenue_share_model_id,organisation_id,sequence,label,basis)
+ VALUES (gen_random_uuid(),'$RSM','$ORG_A',2,'Community fund','FIXED');"
+
+must_fail "a rate above 100% is refused" \
+"INSERT INTO plan.waterfall_step (id,revenue_share_model_id,organisation_id,sequence,label,basis,rate)
+ VALUES (gen_random_uuid(),'$RSM','$ORG_A',3,'Impossible share','OPERATING_SURPLUS',1.5);"
+
+must_fail "a floor above a cap is refused" \
+"INSERT INTO plan.waterfall_step (id,revenue_share_model_id,organisation_id,sequence,label,basis,rate,cap_minor,floor_minor)
+ VALUES (gen_random_uuid(),'$RSM','$ORG_A',4,'Contradictory','OPERATING_SURPLUS',0.1,1000000,2000000);"
+
+must_succeed "a well-formed step is accepted" \
+"INSERT INTO plan.waterfall_step (id,revenue_share_model_id,organisation_id,sequence,label,basis,rate,cap_minor,floor_minor,beneficiary_party_id)
+ VALUES (gen_random_uuid(),'$RSM','$ORG_A',5,'Government entitlement','OPERATING_SURPLUS',0.4,2000000,1000000,'$PARTY');"
+
+must_succeed "a RESIDUAL sweep needs no rate" \
+"INSERT INTO plan.waterfall_step (id,revenue_share_model_id,organisation_id,sequence,label,basis)
+ VALUES (gen_random_uuid(),'$RSM','$ORG_A',6,'Reinvestment','RESIDUAL');"
+
+must_fail "two versions of the terms cannot apply on the same day" \
+"INSERT INTO plan.revenue_share_model (id,partnership_id,organisation_id,name,share_type,version_number,effective_from)
+ VALUES (gen_random_uuid(),'$PSHIP','$ORG_A','Renegotiated','HYBRID',2,'2026-06-01');"
+
+must_succeed "a version starting the day after the last one ends is accepted" \
+"INSERT INTO plan.revenue_share_model (id,partnership_id,organisation_id,name,share_type,version_number,effective_from)
+ VALUES (gen_random_uuid(),'$PSHIP','$ORG_A','Renegotiated','HYBRID',2,'2027-01-01');"
+
+must_fail "capital claimed as invested must name the payment that funded it" \
+"INSERT INTO plan.capital_recovery_event (id,partnership_id,organisation_id,facility_id,event_type,amount_minor,occurred_on)
+ VALUES (gen_random_uuid(),'$PSHIP','$ORG_A','$FAC_A','INVESTMENT',5000000,'2026-06-01');"
+
+must_fail "a recovery event cannot be edited after the fact" \
+"UPDATE plan.capital_recovery_event SET amount_minor = 999999 WHERE id='$RECOVERY';"
+
+must_fail "nor deleted" \
+"DELETE FROM plan.capital_recovery_event WHERE id='$RECOVERY';"
+
+must_fail "a zero-value recovery event carries no information and is refused" \
+"INSERT INTO plan.capital_recovery_event (id,partnership_id,organisation_id,facility_id,event_type,amount_minor,occurred_on)
+ VALUES (gen_random_uuid(),'$PSHIP','$ORG_A','$FAC_A','RECOVERY',0,'2026-06-01');"
+
+echo
 echo "=== Row-level security (ADR 0005) ==="
 echo "  (run as chc_app, which does NOT bypass RLS)"
 

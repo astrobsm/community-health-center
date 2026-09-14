@@ -304,9 +304,48 @@ seq basis              label                            rate/amount   cap      f
  9  RESIDUAL           Reinvestment / distribution      residual      —        —
 ```
 
-The calculator is a pure function over `(ledgerTotals, waterfallSteps)`. It is exhaustively unit
-tested, including: zero revenue, a loss-making month, a cap binding, a floor binding, a floor and
-cap in tension, and full capital recovery mid-period.
+Rows 1-3 above are the derivation, not configuration: costs are deducted before there is anything to
+share, which is arithmetic rather than policy. Configuration begins at the distribution steps, and a
+step may draw on any basis — `GROSS_REVENUE` for a share taken off the top, `OPERATING_SURPLUS` for
+a share of what the facility actually made, `FIXED` for a stated sum, `RESIDUAL` for a share of
+what is left at that point in the order.
+
+The calculator, `apps/api/src/modules/partnership/domain/waterfall.ts`, is a pure function over
+`(ledgerTotals, waterfallSteps, outstandingCapital)`. Its central invariant:
+
+```
+Σ allocations + residual === distributable,   exactly, in kobo
+```
+
+which holds by construction — the residual is whatever is left in the pool, never a separately
+computed figure that might disagree. The function throws rather than return if it is ever violated.
+
+Rules the engine holds to, each of which exists because the alternative misleads someone:
+
+- **A step is calculated from its basis, but drawn from the pool.** 40% of surplus means 40% of the
+  surplus, not 40% of what happened to be left after earlier steps. The difference is somebody's
+  money.
+- **Nobody shares in a loss.** A negative surplus distributes nothing rather than producing negative
+  allocations that read as though a party owed money back.
+- **A floor is a promise about the entitlement, not a promise the facility can keep.** Where the pool
+  cannot meet it, the step is paid what there is and the gap is reported as a shortfall — never
+  silently absorbed.
+- **A capital recovery step is capped by the balance outstanding**, which falls as it is recovered.
+  A fixed cap cannot express that, so such steps carry `is_capital_recovery` and the engine reads
+  the balance when the period is computed. It binds even when a looser fixed cap is also configured:
+  recovering more than was invested is being paid twice.
+- **A floor above a cap is refused**, in the schema, in the database, and in the engine. There is no
+  amount satisfying both, and choosing either silently hands one party money the other was promised.
+
+It is exhaustively unit tested, including: zero revenue, a loss-making month, a cap binding, a floor
+binding, a floor and cap in tension, a floor the facility cannot afford, a zero cap, and full
+capital recovery mid-period.
+
+**A settlement is computed, never stored.** It is derived from the posted ledger for the period and
+the terms in force on it (§10). That is what makes a recomputation next year produce the same
+answer: a closed period's entries cannot change, and the version is selected by date rather than by
+recency. A settlement for an open period is returned marked provisional, because the entries it
+reads are still arriving.
 
 `revenue_share_model` is versioned with an effective date range. **The version in force on the
 period being computed is always used** — so a renegotiation next year cannot retroactively change
