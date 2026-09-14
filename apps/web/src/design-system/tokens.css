@@ -1,0 +1,119 @@
+/* =============================================================================
+   Design tokens.
+
+   Built for the actual device: a mid-range Android, held outdoors, in bright
+   sunlight, by someone who may be wearing gloves.
+
+   That drives three choices that differ from a typical web app:
+     - High contrast throughout. The palette is chosen for legibility in glare,
+       not for subtlety on a calibrated monitor.
+     - Touch targets of at least 44px, and 48px for anything in the field
+       capture flow.
+     - Type that starts at 16px and never goes below 14px, because a 12px label
+       is unreadable on a scratched screen at arm's length.
+   ============================================================================= */
+
+:root {
+  /* --- Colour ------------------------------------------------------------ */
+  --ink: #0f172a;
+  --ink-soft: #334155;
+  --ink-muted: #64748b;
+  --ink-inverse: #ffffff;
+
+  --surface: #ffffff;
+  --surface-sunken: #f1f5f9;
+  --surface-raised: #ffffff;
+  --page: #f8fafc;
+
+  --line: #cbd5e1;
+  --line-strong: #94a3b8;
+
+  --brand: #0f766e;
+  --brand-strong: #115e59;
+  --brand-soft: #ccfbf1;
+
+  /* Status colours double as data-classification colours, so "how sure are we
+     about this number" is visible at a glance rather than buried in a tooltip. */
+  --ok: #15803d;
+  --ok-soft: #dcfce7;
+  --warn: #b45309;
+  --warn-soft: #fef3c7;
+  --danger: #b91c1c;
+  --danger-soft: #fee2e2;
+  --info: #1d4ed8;
+  --info-soft: #dbeafe;
+
+  /* --- Type -------------------------------------------------------------- */
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace;
+
+  --text-xs: 0.8125rem; /* 13px — the floor, used only for metadata */
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+
+  /* --- Space ------------------------------------------------------------- */
+  --s1: 0.25rem;
+  --s2: 0.5rem;
+  --s3: 0.75rem;
+  --s4: 1rem;
+  --s5: 1.5rem;
+  --s6: 2rem;
+  --s7: 3rem;
+
+  /* --- Shape ------------------------------------------------------------- */
+  --radius: 0.5rem;
+  --radius-lg: 0.75rem;
+  --shadow: 0 1px 2px rgb(15 23 42 / 0.06), 0 1px 3px rgb(15 23 42 / 0.1);
+  --shadow-lg: 0 4px 6px -1px rgb(15 23 42 / 0.1), 0 2px 4px -2px rgb(15 23 42 / 0.1);
+
+  /* --- Touch ------------------------------------------------------------- */
+  --touch: 44px;
+  --touch-field: 48px;
+}
+
+/* Dark mode is not a preference here — it is a battery and glare decision, and
+   a clinician on a night shift should not be flashbanged by a white screen. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #f1f5f9;
+    --ink-soft: #cbd5e1;
+    --ink-muted: #94a3b8;
+    --ink-inverse: #0f172a;
+
+    --surface: #1e293b;
+    --surface-sunken: #0f172a;
+    --surface-raised: #273449;
+    --page: #0b1220;
+
+    --line: #334155;
+    --line-strong: #475569;
+
+    --brand: #2dd4bf;
+    --brand-strong: #5eead4;
+    --brand-soft: #134e4a;
+
+    --ok: #4ade80;
+    --ok-soft: #14532d;
+    --warn: #fbbf24;
+    --warn-soft: #451a03;
+    --danger: #f87171;
+    --danger-soft: #450a0a;
+    --info: #60a5fa;
+    --info-soft: #172554;
+  }
+}
+
+/* Respect a user who has asked for less motion. In a clinical setting an
+   animation is decoration, and decoration is never worth a headache. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

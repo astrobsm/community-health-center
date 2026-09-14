@@ -58,6 +58,30 @@ Two tokens with deliberately different properties.
 - 30 days because a field device may be offline for weeks; a shorter window would force an assessor
   to return to coverage merely to keep working.
 
+### Where the refresh token is kept
+
+**Revised during implementation.** The original design held both tokens in memory only, which is the
+strongest position against XSS.
+
+Building the field app showed that to be the wrong trade *for this device*. A tab refresh, a crash,
+or the OS reclaiming memory would sign the user out — and offline, with no way to complete a full
+sign-in, that strands a day of unsynced fieldwork behind an unusable login form.
+
+The refresh token is therefore persisted in IndexedDB, and the app opens on a **lock screen** asking
+only for the password. That password does double duty: it restores the session *and* unwraps the
+local data-encryption key, which is the thing actually protecting patient data on a stolen device.
+
+What did NOT change:
+- the access token is still memory-only;
+- the data-encryption key is **never** persisted in any form, so the encrypted store stays opaque
+  until the password is entered;
+- the lock screen shows the count of unsynced records *before* unlocking, because those counts are
+  deliberately stored in plaintext.
+
+The residual XSS risk is mitigated where it actually lives — a strict CSP, no third-party scripts,
+and a 10-minute access token. An attacker who can already run script in the page can read an
+in-memory token just as easily as a stored one.
+
 ### Why not cookies
 
 Field clients are PWAs that also run as installed apps and must send credentials from a service

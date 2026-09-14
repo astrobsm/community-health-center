@@ -22,7 +22,7 @@ The bias throughout is toward **boring, mature, typed, self-hostable** technolog
 | Frontend | React + Vite, installable PWA | 19.x / 6.x |
 | Offline store | IndexedDB via Dexie, AES-GCM field encryption | 4.x |
 | Server state | TanStack Query | 5.x |
-| Styling | Tailwind CSS + Radix UI primitives | 4.x |
+| Styling | Native HTML elements + hand-authored CSS tokens (ADR 0006) | — |
 | Validation (shared) | Zod | 3.x |
 | PDF generation | Playwright Chromium (HTML to PDF) | — |
 | DOCX generation | docxtemplater | — |
@@ -155,9 +155,12 @@ API are client-agnostic — a React Native client can be added without touching 
   stale-while-revalidate behaviour that suits a 3G link.
 - **React Router 7** (data router) for route-level code splitting — the nurse never downloads the
   finance bundle.
-- **Tailwind CSS 4 + Radix UI**: Radix supplies accessible, unstyled primitives (WCAG 2.1 AA
-  keyboard and screen-reader behaviour we must not hand-roll); Tailwind supplies a token-driven
-  design system shared by all modules (spec §90).
+- **Native HTML elements with hand-authored CSS** (`design-system/tokens.css`, `base.css`).
+  This reverses the original Tailwind + Radix choice — see ADR 0006 for the full reasoning. In
+  short: the entire component set here is inputs, selects, radios, checkboxes, buttons and a modal,
+  all of which the platform already implements with correct keyboard and screen-reader behaviour.
+  Radix would render `<div role="radio">` and re-implement arrow-key navigation in JavaScript,
+  which is how apps get *less* accessible, not more. The whole stylesheet is 2.3 kB gzipped.
 - **React Hook Form + Zod** — the same Zod schema validates on the device offline and on the
   server, so a form filled in a village cannot fail validation on sync two weeks later.
 - **Recharts** for charts: small, declarative, SVG-based, and every series binds to a real query.
