@@ -124,6 +124,12 @@ export const BusinessErrorCode = {
   REASON_REQUIRED: 'reason-required',
   DOCUMENT_INCOMPLETE: 'document-incomplete',
   CLINICAL_RECORD_IMMUTABLE: 'clinical-record-immutable',
+  /** A metric set that patient volume alone would decide (spec §25). */
+  INCENTIVE_NOT_SCORABLE: 'incentive-not-scorable',
+  /** A credential that has lapsed or been suspended, blocking practice. */
+  PRACTICE_BLOCKED: 'practice-blocked',
+  /** A metric naming a query that does not exist, so nothing can compute it. */
+  UNKNOWN_METRIC_QUERY: 'unknown-metric-query',
 } as const;
 export type BusinessErrorCode = (typeof BusinessErrorCode)[keyof typeof BusinessErrorCode];
 

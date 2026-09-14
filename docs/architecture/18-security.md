@@ -156,7 +156,16 @@ the consent.
 
 Enforced in the service layer with explicit checks and covered by tests, not left to role design
 alone — because an organisation may legitimately grant one person both permissions, and the
-*action-level* check must still hold.
+*action-level* check must still hold. The incentive rule is enforced twice over: by the service, and
+by a CHECK constraint on `people.staff_incentive` that refuses a row whose approver is its creator,
+so the same self-approval written in raw SQL is refused too.
+
+Each side of each rule must name a permission that exists and that some assignable role holds —
+asserted by test, after two of these rules were found naming permissions the catalogue had never
+heard of, which made them read as controls while being unenforceable in fact. The same test found
+that only the finance officer could close a period, so "the person posting entries may not close the
+period" could be satisfied only by employing two finance officers; the organisation administrator,
+who cannot post, now holds `finance.close_period` as well.
 
 ---
 

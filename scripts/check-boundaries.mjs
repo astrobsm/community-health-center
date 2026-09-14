@@ -61,6 +61,11 @@ const LAYERS = {
   hr: 3,
   attendance: 3,
   performance: 3,
+  // The single module implementing hr, attendance and performance above. It
+  // is one Prisma schema and one set of records; splitting the code across
+  // three directories would have made the boundary map prettier and the
+  // imports circular.
+  people: 3,
   community: 3,
 
   // L4 — cross-domain workflow

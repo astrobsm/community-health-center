@@ -18,3 +18,5 @@ export * from './document.js';
 export * from './execution.js';
 export * from './clinical.js';
 export * from './operations.js';
+export * from './people.js';
+export * from './quality.js';

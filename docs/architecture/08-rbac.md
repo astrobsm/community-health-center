@@ -38,15 +38,15 @@ encounter.read          encounter.write         encounter.close
 clinical.read           clinical.write          clinical.amend
 lab.order               lab.collect             lab.process              lab.verify
 pharmacy.read           pharmacy.verify         pharmacy.dispense        pharmacy.return
-inventory.read          inventory.receive       inventory.issue          inventory.adjust  inventory.count
+inventory.read          inventory.receive       inventory.issue          inventory.adjust  inventory.adjust_approve  inventory.count
 billing.read            billing.charge          billing.invoice          billing.waive
 finance.read            finance.post            finance.reverse          finance.close_period  finance.reconcile
 payment.receive         payment.refund
 hr.read                 hr.write                hr.credential_verify
 attendance.read         attendance.record       attendance.correct
-performance.read        performance.configure   performance.approve_incentive
+performance.read        performance.configure   performance.compute_incentive  performance.approve_incentive
 quality.read            quality.write           quality.close
-kpi.read                kpi.configure
+kpi.read                kpi.configure           kpi.compute
 document.read           document.generate       document.approve
 report.read             report.export
 analytics.read          analytics.benchmark

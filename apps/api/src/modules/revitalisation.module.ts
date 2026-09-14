@@ -41,6 +41,24 @@ import { ProcurementController } from './procurement/procurement.controller';
 import { ProcurementService } from './procurement/procurement.service';
 import { AssetController, ProjectController } from './project/project.controller';
 import { ProjectService } from './project/project.service';
+import { KpiController } from './kpi/kpi.controller';
+import { KpiService } from './kpi/kpi.service';
+import { AttendanceService } from './people/attendance.service';
+import {
+  AttendanceController,
+  CredentialController,
+  IncentiveController,
+  PerformanceController,
+  StaffController,
+} from './people/people.controller';
+import { PerformanceService } from './people/performance.service';
+import { StaffService } from './people/staff.service';
+import {
+  ComplaintController,
+  IncidentController,
+  QualityCycleController,
+} from './quality/incident.controller';
+import { IncidentService } from './quality/incident.service';
 import { ComplianceController, RiskController } from './quality/quality.controller';
 import { QualityService } from './quality/quality.service';
 
@@ -60,6 +78,8 @@ import { QualityService } from './quality/quality.service';
  *   finance   <- nothing above it: one door to the ledger, called by the rest
  *   inventory, pharmacy, laboratory <- finance (every movement posts)
  *   document  <- L4: reads from every domain module below it and writes none
+ *   people    <- staff, credentials, attendance, performance, incentives (L3)
+ *   kpi       <- L4: computes from every domain below it, writes only results
  *   config    <- everything above it
  *
  * `baseline` depends on `evidence` (it must know what is still uploading) but
@@ -94,6 +114,15 @@ import { QualityService } from './quality/quality.service';
     PharmacyController,
     LaboratoryController,
     FinanceController,
+    StaffController,
+    CredentialController,
+    AttendanceController,
+    PerformanceController,
+    IncentiveController,
+    IncidentController,
+    ComplaintController,
+    QualityCycleController,
+    KpiController,
   ],
   providers: [
     {
@@ -234,6 +263,32 @@ import { QualityService } from './quality/quality.service';
       useFactory: (prisma: PrismaService, audit: AuditService) => new EncounterService(prisma, audit),
     },
     {
+      provide: StaffService,
+      inject: [PrismaService, AuditService],
+      useFactory: (prisma: PrismaService, audit: AuditService) => new StaffService(prisma, audit),
+    },
+    {
+      provide: AttendanceService,
+      inject: [PrismaService, AuditService],
+      useFactory: (prisma: PrismaService, audit: AuditService) => new AttendanceService(prisma, audit),
+    },
+    {
+      provide: PerformanceService,
+      inject: [PrismaService, AuditService],
+      useFactory: (prisma: PrismaService, audit: AuditService) => new PerformanceService(prisma, audit),
+    },
+    {
+      provide: IncidentService,
+      inject: [PrismaService, AuditService],
+      useFactory: (prisma: PrismaService, audit: AuditService) => new IncidentService(prisma, audit),
+    },
+    {
+      provide: KpiService,
+      inject: [PrismaService, AuditService, ConfigService],
+      useFactory: (prisma: PrismaService, audit: AuditService, config: ConfigService) =>
+        new KpiService(prisma, audit, config),
+    },
+    {
       provide: ContractService,
       inject: ['Env', PrismaService, StorageService, AuditService],
       useFactory: (env: Env, prisma: PrismaService, storage: StorageService, audit: AuditService) =>
@@ -261,6 +316,11 @@ import { QualityService } from './quality/quality.service';
     InventoryService,
     PharmacyService,
     LaboratoryService,
+    StaffService,
+    AttendanceService,
+    PerformanceService,
+    IncidentService,
+    KpiService,
     ConfigService,
   ],
 })

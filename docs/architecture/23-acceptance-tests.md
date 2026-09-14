@@ -76,13 +76,26 @@ Order raises a charge and consumes reagent stock; sample and accession recorded;
 invisible to clinicians until verified; on verification it appears in the timeline; turnaround time
 is computed from timestamps; a critical flag raises an escalating notification.
 
-### J — Attendance can feed performance
-`attendance-to-incentive.spec.ts`
+### J — Attendance can feed performance ✅
+`apps/api/src/modules/people/domain/people.spec.ts` and `apps/api/scripts/smoke-people.sh`
 
 Clock events → attendance rate and punctuality → weighted performance metrics → an incentive whose
-total equals the sum of its components and whose formula text is stored. **Asserts explicitly that
-patient volume alone cannot determine the incentive** (spec §25): a staff member with high volume and
-poor attendance, documentation and stock accountability scores below one with the reverse profile.
+total equals the sum of its components and whose formula text is stored. **Patient volume alone
+cannot determine the incentive** (spec §25), and this is asserted in three independent places:
+
+- `assertScorable` refuses a metric set whose weighted metrics are all volume, refuses one where
+  volume carries more than the configured ceiling of the total weight, and is re-run at computation
+  against the metrics that could *actually* be scored — so a month in which every quality query
+  returns nothing does not quietly leave volume standing alone;
+- `isVolumeMetric` is read from the query catalogue, not from the metric row, so a volume query
+  cannot be relabelled as a quality metric by editing a field;
+- the smoke suite proves both refusals against a running API and a real database.
+
+An unclosed shift is the case the engine is shaped around: somebody clocked in and never clocked out.
+It counts as present — they were there — its hours are excluded from the totals rather than counted
+as zero, and the period is flagged for review before it pays anybody. Recording it as zero hours
+would take money from somebody who worked; recording it as a full shift would pay for hours nobody
+can evidence.
 
 ### K — Financial data can feed partnership calculations
 `waterfall.spec.ts`
@@ -208,7 +221,7 @@ a clickable mock-up.
 | R6 | Criteria C, D, E, F; `three-way-match` |
 | R7 | `amendment-chain`, `clinical-timeline`, `offline-clinical.e2e` |
 | R8 | Criteria G, H, I; `no-negative-stock`, `journal-balance`, `cash-reconciliation` |
-| R9 | Criterion J |
+| R9 | Criterion J ✅ — 56 unit tests, `smoke:people` (95 checks), 113 database invariants |
 | R10 | Criteria B, M; `dashboard-source`, `small-cell` |
 | R11 | `ai-no-write-access`, `ai-grounding`, `ai-injection`, `ai-labelling`, `ai-disabled` |
 | Final | `acceptance/full-chain.e2e.ts` |

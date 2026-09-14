@@ -277,7 +277,8 @@ export const KPI_DEFINITIONS: Array<{
   {
     code: 'COMPLAINT_RESOLUTION_TIME',
     name: 'Complaint resolution time',
-    definition: 'Median days from complaint receipt to resolution.',
+    definition:
+      'Mean days from receipt to resolution, over complaints resolved in the period. Complaints still open are excluded: they have no resolution time yet, and counting them as nought would flatter the figure.',
     unit: 'days',
     domainCode: 'QUALITY',
     direction: 'LOWER_BETTER',
@@ -302,6 +303,37 @@ export const KPI_DEFINITIONS: Array<{
     domainCode: 'QUALITY',
     direction: 'HIGHER_BETTER',
     sourceQueryId: 'kpi/documentation_completeness@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+
+  {
+    code: 'CONSENT_DOCUMENTED',
+    name: 'Consent documented',
+    definition: 'Encounters whose patient held a granted, unwithdrawn treatment consent when care began, as a proportion of encounters. Computed from consent records against encounter start times, so a consent taken afterwards does not count.',
+    unit: '%',
+    domainCode: 'QUALITY',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/consent_documented@v1',
+    defaultPeriod: 'MONTHLY',
+  },
+  {
+    code: 'CORRECTIVE_ACTION_COMPLETION',
+    name: 'Corrective actions completed',
+    definition: 'Corrective actions falling due in the period that were completed, as a proportion of those due. Measures whether what was promised after an incident actually happened.',
+    unit: '%',
+    domainCode: 'QUALITY',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/corrective_action_completion@v1',
+    defaultPeriod: 'QUARTERLY',
+  },
+  {
+    code: 'REVENUE_COLLECTED',
+    name: 'Revenue collected',
+    definition: 'Inbound payments received in the period. This is cash collected, not revenue earned: TOTAL_REVENUE measures the latter from the ledger, and in a facility that gives credit the two differ.',
+    unit: 'NGN',
+    domainCode: 'FINANCE',
+    direction: 'HIGHER_BETTER',
+    sourceQueryId: 'kpi/revenue_collected@v1',
     defaultPeriod: 'MONTHLY',
   },
 

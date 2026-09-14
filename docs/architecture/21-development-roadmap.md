@@ -199,7 +199,7 @@ workflow of doc 14 §5 is not yet built.
 
 ---
 
-### Release 9 — People and quality
+### Release 9 — People and quality ✅
 
 Staff, credentials with expiry alerts, postings, schedules, attendance (QR/PIN), leave, configurable
 performance metrics, transparent incentive computation, incidents, complaints, clinical audits,
@@ -207,6 +207,38 @@ quality improvement cycles, and the KPI engine.
 
 **Acceptance:** criterion J — attendance feeds performance feeds incentive, with the formula visible
 and auditable at every step; patient volume alone cannot determine an incentive.
+
+**Verified by:** 56 unit tests over the attendance, incentive and credential engines, and
+`npm run smoke:people` — 95 checks end to end, in which a nurse's three rostered shifts become an
+attendance figure, that figure becomes a performance score, and that score becomes an incentive whose
+components sum to its total to the kobo and each of which states its own arithmetic in words.
+
+The volume rule is proved twice, because it is the one that matters. A metric set in which patient
+volume is the only weighted metric is refused at configuration. A person for whom only the volume
+metric could be computed — every quality metric returned nothing — is refused at computation, even
+though the configuration itself is sound.
+
+Segregation of duties is proved at both layers: the HR officer who computed an incentive does not
+hold the approval permission at all, and a facility manager who holds *both* permissions is still
+refused approval of an incentive they computed themselves, by the service and by a CHECK constraint
+that refuses the same self-approval written in raw SQL.
+
+Database invariants: 113 (up from 98).
+
+**Two things this release found in earlier work.** `SEGREGATION_OF_DUTIES` named two permissions that
+did not exist — `inventory.adjust.approve` and `performance.compute_incentive` — so two documented
+controls were unenforceable in fact; both now exist, are granted, and a test asserts that every side
+of every rule names a real permission held by an assignable role. That test also showed that only the
+finance officer could close a period, making "the person posting entries may not close the period"
+satisfiable only by hiring a second finance officer; the administrator, who cannot post, now holds it.
+Separately, `encounter.attending_staff_id` was being set to the logged-in user's id rather than their
+staff record's, so every per-clinician metric would have matched nothing.
+
+**Deferred with reason:** leave requests and approvals, performance reviews with staff
+acknowledgement, and 27 of the 35 registry KPIs whose named queries are not yet written. The KPI
+registry reports `computable: false` for those and assignment is refused rather than returning an
+empty chart — the gap is visible rather than papered over. Clinical audit cycles are served by the
+improvement-cycle path, which requires a measured indicator before a review can be recorded.
 
 ---
 

@@ -166,3 +166,29 @@ export class OfflineLimitReachedError extends BusinessRuleError {
     );
   }
 }
+
+export class IncentiveNotScorableError extends BusinessRuleError {
+  constructor(detail: string, code: string) {
+    super('incentive-not-scorable', 'Incentive cannot be computed', detail, HttpStatus.CONFLICT, {
+      reason: code,
+    });
+  }
+}
+
+export class PracticeBlockedError extends BusinessRuleError {
+  constructor(staffName: string, reasons: readonly string[]) {
+    super(
+      'practice-blocked',
+      'Credential does not permit practice',
+      `${staffName} holds a credential that does not permit practice today. ${reasons.join(' ')}`,
+      HttpStatus.CONFLICT,
+      { reasons },
+    );
+  }
+}
+
+export class UnknownMetricQueryHttpError extends BusinessRuleError {
+  constructor(detail: string) {
+    super('unknown-metric-query', 'No such metric query', detail, HttpStatus.BAD_REQUEST);
+  }
+}

@@ -88,6 +88,10 @@ export const PERMISSIONS = [
   'inventory.receive',
   'inventory.issue',
   'inventory.adjust',
+  // A stock adjustment writes off or writes on value without a transaction
+  // behind it, so a second person signs for it. SEGREGATION_OF_DUTIES names
+  // this pair, and a rule whose permission does not exist is not a control.
+  'inventory.adjust_approve',
   'inventory.count',
 
   // Finance
@@ -117,6 +121,9 @@ export const PERMISSIONS = [
   'attendance.correct',
   'performance.read',
   'performance.configure',
+  // Computing an incentive and approving its payment are separate acts, and
+  // SEGREGATION_OF_DUTIES forbids one person doing both to the same record.
+  'performance.compute_incentive',
   'performance.approve_incentive',
 
   // Quality and measurement
@@ -125,6 +132,8 @@ export const PERMISSIONS = [
   'quality.close',
   'kpi.read',
   'kpi.configure',
+  /// Recomputing a KPI writes a result row with its provenance.
+  'kpi.compute',
 
   // Output
   'document.read',
@@ -223,6 +232,12 @@ export const ROLE_TEMPLATES: Record<RoleCode, { name: string; description: strin
       'capex.approve',
       'payment.approve',
       'procurement.approve',
+      // Closing a period seals what the finance officer posted. Held here as
+      // well as by the finance officer so that a facility with one finance
+      // officer still has somebody who can close a month without having
+      // posted into it — otherwise the segregation rule is satisfiable only
+      // by having two finance officers, and most facilities have one.
+      'finance.close_period',
       // Sealing Day 0 is irreversible and establishes the reference point for
       // the whole partnership, so it sits with the administrator rather than
       // the project manager who captured the assessment. Same reasoning for
@@ -281,6 +296,7 @@ export const ROLE_TEMPLATES: Record<RoleCode, { name: string; description: strin
       'pharmacy.read',
       'inventory.read',
       'inventory.adjust',
+      'inventory.adjust_approve',
       'billing.read',
       'billing.waive',
       'finance.read',
@@ -290,11 +306,17 @@ export const ROLE_TEMPLATES: Record<RoleCode, { name: string; description: strin
       'attendance.read',
       'attendance.correct',
       'performance.read',
+      // Both halves, deliberately. In a facility with one manager, somebody has
+      // to be able to do each; SEGREGATION_OF_DUTIES is enforced against the
+      // record — the person who computed THIS incentive may not approve it —
+      // rather than by withholding a permission a small facility needs.
+      'performance.compute_incentive',
       'performance.approve_incentive',
       'quality.read',
       'quality.write',
       'quality.close',
       'kpi.read',
+      'kpi.compute',
       'document.read',
       'document.generate',
       'report.read',
@@ -577,6 +599,7 @@ export const ROLE_TEMPLATES: Record<RoleCode, { name: string; description: strin
       'attendance.record',
       'attendance.correct',
       'performance.read',
+      'performance.compute_incentive',
       'quality.read',
       'document.read',
       'report.read',
@@ -649,7 +672,7 @@ export const SEGREGATION_OF_DUTIES: ReadonlyArray<{
 }> = [
   { action: 'payment.raise', conflictsWith: 'payment.approve', rule: 'The person who raises a payment may not approve it.' },
   { action: 'procurement.request', conflictsWith: 'procurement.approve', rule: 'The requester may not approve the purchase order.' },
-  { action: 'inventory.adjust', conflictsWith: 'inventory.adjust.approve', rule: 'The person recording a stock adjustment may not approve it.' },
+  { action: 'inventory.adjust', conflictsWith: 'inventory.adjust_approve', rule: 'The person recording a stock adjustment may not approve it.' },
   { action: 'finance.post', conflictsWith: 'finance.close_period', rule: 'The person posting entries may not close the period.' },
   { action: 'performance.compute_incentive', conflictsWith: 'performance.approve_incentive', rule: 'The person computing an incentive may not approve its payment.' },
 ];

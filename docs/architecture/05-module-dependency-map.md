@@ -187,6 +187,7 @@ graph TD
 | `hr` | L3 | identity, facility | — | `StaffPosted`, `CredentialExpiring` |
 | `attendance` | L3 | hr | — | `AttendanceRecorded` |
 | `performance` | L3 | attendance, clinical, inventory, config | `AttendanceRecorded` | `IncentiveComputed` |
+| `people` | L3 | identity, facility, audit | — | the three above, as built |
 | `community` | L3 | facility | — | `SurveyCompleted` |
 | `kpi` | L4 | analytics SQL only (read) | many | `KpiComputed` |
 | `quality` | L4 | encounter, kpi | `CriticalResult`, `ComplaintRaised` | `QualityActionRaised` |
@@ -236,6 +237,22 @@ apps/web/src/
 
 Each feature folder contains `api.ts` (typed calls against `packages/contracts`), `hooks.ts`
 (TanStack Query), `components/`, `pages/`, and `offline.ts` where the feature is offline-capable.
+
+### `hr`, `attendance` and `performance` are one directory
+
+They are listed separately above because they are three responsibilities, and the layer rules apply
+to each of them identically. In the API they are implemented as a single module,
+`apps/api/src/modules/people/`, and the boundary checker declares `people` at L3 alongside them.
+
+The reason is the data. Staff, credentials, postings, schedules, attendance events, metrics and
+incentives are one Prisma schema and one set of records about the same people; an incentive reads
+attendance, attendance reads the roster, and the roster belongs to a staff member. Split across three
+directories, those reads would have been three modules importing each other in a ring. One module
+with a clear internal shape was the honest answer, and the layer map says so rather than describing a
+separation the code does not have.
+
+The KPI engine is its own module, `apps/api/src/modules/kpi/`, at L4 as the map says: it reads across
+every domain below it and writes nothing but its own results.
 
 **Route-level code splitting is mandatory.** A CHEW on a 3G link must never download the finance,
 partnership, or analytics bundles. Enforced by a bundle-size budget in CI.

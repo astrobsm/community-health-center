@@ -86,7 +86,7 @@ describe('least privilege — these are the claims doc 08 makes, asserted', () =
   });
 
   it('the Auditor can read everything and write nothing', () => {
-    const writeLike = ['write', 'post', 'approve', 'execute', 'dispense', 'adjust', 'seal', 'merge', 'receive', 'issue', 'refund', 'waive', 'close', 'unlock', 'commission', 'draft', 'generate', 'configure', 'record', 'correct', 'submit', 'verify', 'upload', 'order', 'collect', 'process', 'prioritise', 'request', 'complete', 'return', 'count', 'charge', 'invoice', 'transition_stage', 'compute_waterfall', 'credential_verify', 'approve_incentive'];
+    const writeLike = ['write', 'post', 'approve', 'execute', 'dispense', 'adjust', 'seal', 'merge', 'receive', 'issue', 'refund', 'waive', 'close', 'unlock', 'commission', 'draft', 'generate', 'configure', 'record', 'correct', 'submit', 'verify', 'upload', 'order', 'collect', 'process', 'prioritise', 'request', 'complete', 'return', 'count', 'charge', 'invoice', 'transition_stage', 'compute_waterfall', 'credential_verify', 'approve_incentive', 'compute_incentive', 'adjust_approve', 'compute'];
     for (const permission of ROLE_TEMPLATES.AUDITOR.permissions) {
       const { action } = parsePermission(permission);
       expect(
@@ -177,11 +177,47 @@ describe('segregation of duties', () => {
     }
   });
 
+  it('names a real permission on both sides of every rule', () => {
+    // Two rules named permissions that did not exist — `inventory.adjust.approve`
+    // and `performance.compute_incentive`. Each read as a control in the
+    // documentation while being unenforceable in fact, because no guard can
+    // check a permission the catalogue has never heard of.
+    for (const rule of SEGREGATION_OF_DUTIES) {
+      expect(isPermission(rule.action), `no such permission "${rule.action}"`).toBe(true);
+      expect(
+        isPermission(rule.conflictsWith),
+        `no such permission "${rule.conflictsWith}"`,
+      ).toBe(true);
+    }
+  });
+
+  it('gives both halves of every conflict to somebody who can assign them', () => {
+    // A segregation rule where nobody holds one side is not segregation; it is
+    // a task that cannot be completed.
+    const holders = (permission: string): string[] =>
+      Object.entries(ROLE_TEMPLATES)
+        .filter(([code, template]) => code !== 'SUPER_ADMIN' && template.permissions.includes(permission as Permission))
+        .map(([code]) => code);
+
+    for (const rule of SEGREGATION_OF_DUTIES) {
+      expect(holders(rule.action).length, `no assignable role can ${rule.action}`).toBeGreaterThan(0);
+      expect(
+        holders(rule.conflictsWith).length,
+        `no assignable role can ${rule.conflictsWith}`,
+      ).toBeGreaterThan(0);
+      expect(
+        holders(rule.action),
+        `${rule.action} and ${rule.conflictsWith} are held by exactly the same roles, so the rule can ` +
+          'only ever be satisfied by chance',
+      ).not.toEqual(holders(rule.conflictsWith));
+    }
+  });
+
   it('covers the four conflicts that matter most', () => {
     const pairs = SEGREGATION_OF_DUTIES.map((r) => `${r.action}|${r.conflictsWith}`);
     expect(pairs).toContain('payment.raise|payment.approve');
     expect(pairs).toContain('procurement.request|procurement.approve');
-    expect(pairs).toContain('inventory.adjust|inventory.adjust.approve');
+    expect(pairs).toContain('inventory.adjust|inventory.adjust_approve');
     expect(pairs).toContain('performance.compute_incentive|performance.approve_incentive');
   });
 });

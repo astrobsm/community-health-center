@@ -79,6 +79,18 @@ export class EncounterService {
     const context = tryGetContext();
     const count = await this.prisma.encounter.count({ where: { facilityId: patient.facilityId } });
 
+    // The attending staff member, not the logged-in user. They are different
+    // identities: a user is an account, a staff member is a person on the
+    // establishment, and the performance and attendance figures are about the
+    // latter. Storing a user id in a column named staff_id would make every
+    // per-clinician metric silently match nothing.
+    const attendingStaff = context?.userId
+      ? await this.prisma.staff.findFirst({
+          where: { userId: context.userId, facilityId: patient.facilityId, deletedAt: null },
+          select: { id: true },
+        })
+      : null;
+
     const encounter = await this.prisma.encounter.create({
       data: {
         id: input.id ?? randomUUID(),
@@ -90,7 +102,7 @@ export class EncounterService {
         reference: `ENC-${String(count + 1).padStart(7, '0')}`,
         chiefComplaint: input.chiefComplaint,
         startedAt: input.startedAt ? new Date(input.startedAt) : this.now(),
-        attendingStaffId: context?.userId,
+        attendingStaffId: attendingStaff?.id,
         // Never inferred from a backdated timestamp: an encounter written up
         // afterwards says so on its face.
         enteredRetrospectively: input.enteredRetrospectively,
@@ -121,6 +133,14 @@ export class EncounterService {
       patient: { id: patient.id, mrn: patient.mrn },
       // Carried on the response so a prescribing screen has it without asking.
       allergySummary: patient.allergySummary,
+      attendingStaffId: attendingStaff?.id ?? null,
+      // Said out loud rather than left as a blank column. An encounter with no
+      // attending staff member is care nobody is recorded as having given, and
+      // it will be missing from every per-clinician figure.
+      attributionNote: attendingStaff
+        ? undefined
+        : 'No staff record is linked to the account that opened this encounter, so it is not attributed ' +
+          'to anybody. Link the account to a staff record for it to count towards that person’s work.',
     };
   }
 

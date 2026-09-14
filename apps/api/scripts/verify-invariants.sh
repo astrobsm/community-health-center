@@ -574,6 +574,62 @@ must_fail "a payment of zero is refused" \
  VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','PAY-Z0001','INBOUND',0,'CASH');"
 
 echo
+echo "=== People and quality: pay, safety and the promises made to people (spec sections 25, 39) ==="
+
+PPL_SCHED=ffffffff-4444-0000-0000-000000000001
+PPL_INC=ffffffff-4444-0000-0000-000000000002
+USER_ONE=ffffffff-4444-0000-0000-00000000000a
+USER_TWO=ffffffff-4444-0000-0000-00000000000b
+
+must_succeed "people fixtures load" "INSERT INTO people.staff_schedule (id,staff_id,organisation_id,facility_id,period_start,period_end)
+ VALUES ('$PPL_SCHED','$STAFF','$ORG_A','$FAC_A','2026-09-01','2026-09-30');"
+
+must_fail "a shift that ends when it starts is refused" "INSERT INTO people.shift (id,schedule_id,organisation_id,facility_id,starts_at,ends_at)
+ VALUES (gen_random_uuid(),'$PPL_SCHED','$ORG_A','$FAC_A','2026-09-10T08:00:00Z','2026-09-10T08:00:00Z');"
+
+must_fail "a manual attendance entry with no reason is refused" "INSERT INTO people.attendance (id,staff_id,organisation_id,facility_id,event_type,occurred_at,method)
+ VALUES (gen_random_uuid(),'$STAFF','$ORG_A','$FAC_A','CLOCK_IN','2026-09-10T08:00:00Z','MANUAL');"
+
+must_fail "a credential that expires before it was issued is refused" "INSERT INTO people.staff_credential (id,staff_id,organisation_id,facility_id,credential_type,issued_on,expires_on)
+ VALUES (gen_random_uuid(),'$STAFF','$ORG_A','$FAC_A','Licence','2026-06-01','2025-06-01');"
+
+must_fail "a credential called VALID that nobody verified is refused" "INSERT INTO people.staff_credential (id,staff_id,organisation_id,facility_id,credential_type,status)
+ VALUES (gen_random_uuid(),'$STAFF','$ORG_A','$FAC_A','Licence','VALID');"
+
+must_fail "an active metric with no query behind it is refused" "INSERT INTO people.performance_metric (id,organisation_id,code,name,definition,status)
+ VALUES (gen_random_uuid(),'$ORG_A','FEELINGS','Attitude','How the supervisor felt','ACTIVE');"
+
+# Written as INSERTs rather than UPDATEs on a row created earlier. An UPDATE
+# that matches nothing succeeds, so a check written that way passes whether or
+# not the constraint exists — which is how a test ends up proving nothing.
+must_fail "the person who computed an incentive cannot approve it" "INSERT INTO people.staff_incentive (id,staff_id,organisation_id,facility_id,period_start,period_end,status,total_amount_minor,created_by,approved_by,approved_at)
+ VALUES (gen_random_uuid(),'$STAFF','$ORG_A','$FAC_A','2026-09-01','2026-09-30','APPROVED',0,'$USER_ONE','$USER_ONE',now());"
+
+must_fail "an approval with no approver named is refused" "INSERT INTO people.staff_incentive (id,staff_id,organisation_id,facility_id,period_start,period_end,status,total_amount_minor,created_by)
+ VALUES (gen_random_uuid(),'$STAFF','$ORG_A','$FAC_A','2026-09-01','2026-09-30','APPROVED',0,'$USER_ONE');"
+
+must_fail "a total with no component to explain it is refused" "INSERT INTO people.staff_incentive (id,staff_id,organisation_id,facility_id,period_start,period_end,status,total_amount_minor,created_by)
+ VALUES (gen_random_uuid(),'$STAFF','$ORG_A','$FAC_A','2026-09-01','2026-09-30','COMPUTED',500000,'$USER_ONE');"
+
+must_succeed "an incentive approved by a second person, totalling nothing yet, is accepted" "INSERT INTO people.staff_incentive (id,staff_id,organisation_id,facility_id,period_start,period_end,status,total_amount_minor,created_by,approved_by,approved_at)
+ VALUES ('$PPL_INC','$STAFF','$ORG_A','$FAC_A','2026-09-01','2026-09-30','APPROVED',0,'$USER_ONE','$USER_TWO',now());"
+
+must_fail "a component that does not state its arithmetic is refused" "INSERT INTO people.incentive_component (id,staff_incentive_id,organisation_id,label,weight,amount_minor,formula_text)
+ VALUES (gen_random_uuid(),'$PPL_INC','$ORG_A','Attendance',1,0,'x');"
+
+must_fail "an incident closed with no root cause is refused" "INSERT INTO qual.incident (id,organisation_id,facility_id,reference,incident_type,description,occurred_at,status,closed_at)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','INC-V0001','FALL','A patient fell in the corridor',now(),'CLOSED',now());"
+
+must_fail "a completed action nobody verified is refused" "INSERT INTO qual.corrective_action (id,organisation_id,facility_id,description,status,completed_at)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','Move the drug charts','COMPLETED',now());"
+
+must_fail "an anonymous complaint carrying a name is refused" "INSERT INTO qual.complaint (id,organisation_id,facility_id,reference,source,subject,description,is_anonymous,complainant_name)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','CMP-V0001','BOX','Waiting','Waited all morning',true,'Mrs Okeke');"
+
+must_succeed "an anonymous complaint with no name is accepted" "INSERT INTO qual.complaint (id,organisation_id,facility_id,reference,source,subject,description,is_anonymous)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','CMP-V0002','BOX','Waiting','Waited all morning',true);"
+
+echo
 echo "=== Row-level security (ADR 0005) ==="
 echo "  (run as chc_app, which does NOT bypass RLS)"
 
