@@ -14,6 +14,13 @@ import { EncounterController, PatientController } from './clinical/clinical.cont
 import { EncounterService } from './clinical/encounter.service';
 import { PatientService } from './clinical/patient.service';
 import { ConfigService } from './config/config.service';
+import { FinanceService } from './finance/finance.service';
+import { FinanceController } from './finance/finance.controller';
+import { InventoryController, PharmacyController } from './inventory/inventory.controller';
+import { InventoryService } from './inventory/inventory.service';
+import { PharmacyService } from './inventory/pharmacy.service';
+import { LaboratoryController } from './laboratory/laboratory.controller';
+import { LaboratoryService } from './laboratory/laboratory.service';
 import { AssetService } from './project/asset.service';
 import { ContractService } from './document/contract.service';
 import { DocumentContextService } from './document/document-context.service';
@@ -50,6 +57,8 @@ import { QualityService } from './quality/quality.service';
  *   project   <- capex (a project delivers a costed recommendation)
  *   procurement <- project; asset <- procurement (a receipt creates an asset)
  *   patient   <- facility; encounter <- patient (consent gates care)
+ *   finance   <- nothing above it: one door to the ledger, called by the rest
+ *   inventory, pharmacy, laboratory <- finance (every movement posts)
  *   document  <- L4: reads from every domain module below it and writes none
  *   config    <- everything above it
  *
@@ -81,6 +90,10 @@ import { QualityService } from './quality/quality.service';
     ProcurementController,
     PatientController,
     EncounterController,
+    InventoryController,
+    PharmacyController,
+    LaboratoryController,
+    FinanceController,
   ],
   providers: [
     {
@@ -179,6 +192,37 @@ import { QualityService } from './quality/quality.service';
         new ProcurementService(prisma, audit, config),
     },
     {
+      provide: FinanceService,
+      inject: [PrismaService, AuditService],
+      useFactory: (prisma: PrismaService, audit: AuditService) => new FinanceService(prisma, audit),
+    },
+    {
+      provide: InventoryService,
+      inject: [PrismaService, AuditService, FinanceService],
+      useFactory: (prisma: PrismaService, audit: AuditService, finance: FinanceService) =>
+        new InventoryService(prisma, audit, finance),
+    },
+    {
+      provide: PharmacyService,
+      inject: [PrismaService, AuditService, FinanceService, ConfigService],
+      useFactory: (
+        prisma: PrismaService,
+        audit: AuditService,
+        finance: FinanceService,
+        config: ConfigService,
+      ) => new PharmacyService(prisma, audit, finance, config),
+    },
+    {
+      provide: LaboratoryService,
+      inject: [PrismaService, AuditService, FinanceService, ConfigService],
+      useFactory: (
+        prisma: PrismaService,
+        audit: AuditService,
+        finance: FinanceService,
+        config: ConfigService,
+      ) => new LaboratoryService(prisma, audit, finance, config),
+    },
+    {
       provide: PatientService,
       inject: [PrismaService, AuditService, ConfigService],
       useFactory: (prisma: PrismaService, audit: AuditService, config: ConfigService) =>
@@ -213,6 +257,10 @@ import { QualityService } from './quality/quality.service';
     ProcurementService,
     PatientService,
     EncounterService,
+    FinanceService,
+    InventoryService,
+    PharmacyService,
+    LaboratoryService,
     ConfigService,
   ],
 })

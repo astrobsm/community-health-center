@@ -173,7 +173,7 @@ built and tested in Release 2; no new sync machinery was needed, and the Playwri
 
 ---
 
-### Release 8 — Operations
+### Release 8 — Operations ✅
 
 Laboratory (catalogue, orders, samples, results, verification, QC, critical results), pharmacy
 (verification, FEFO dispensing, returns), inventory (batches, the stock ledger, counts,
@@ -183,6 +183,19 @@ reconciliation.
 **Acceptance:** criteria G, H and I — dispensing atomically updates stock, charges and the ledger;
 stock can never go negative; the daily cash identity balances; a critical lab result escalates until
 acknowledged.
+
+**Verified by:** 58 unit tests over FEFO, the posting rules and the escalation ladder, and
+`npm run smoke:operations` — 74 checks end to end, in which one dispensing writes two stock
+movements, a charge and two journal entries in a single transaction; the database refuses to drive a
+batch negative; a potassium of 7.2 is withheld until verified, then escalates until a named clinician
+acknowledges it with what they did; and the trial balance closes at 514,000 kobo on both sides.
+Database invariants: 98 (up from 87).
+
+**Deferred with reason:** laboratory quality control, multi-location stock transfers and supplier
+returns. Each is modelled in the schema and none is on an acceptance criterion; building them thinly
+alongside the three criteria above would have meant less care where a patient is actually at risk.
+Stock counts are served by the adjustment path with its reason and second approver; the blind-count
+workflow of doc 14 §5 is not yet built.
 
 ---
 

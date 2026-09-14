@@ -509,6 +509,71 @@ must_fail "a withdrawal cannot predate the consent it withdraws" \
  VALUES (gen_random_uuid(),'$CPATIENT','$ORG_A','$FAC_A','PHOTOGRAPH',true,'2026-09-10','2026-09-01');"
 
 echo
+echo
+echo "=== Operations: charges, results and payments (spec sections 29-30, 45) ==="
+
+OPS_ENC=ffffffff-3333-0000-0000-000000000001
+OPS_SAMPLE=ffffffff-3333-0000-0000-000000000002
+OPS_ITEM=ffffffff-3333-0000-0000-000000000003
+OPS_TEST=ffffffff-3333-0000-0000-000000000004
+OPS_ORDER=ffffffff-3333-0000-0000-000000000005
+OPS_ORDERITEM=ffffffff-3333-0000-0000-000000000006
+
+must_succeed "operations fixtures load" \
+"INSERT INTO clinical.encounter (id,patient_id,facility_id,organisation_id,reference)
+ VALUES ('$OPS_ENC','$PATIENT','$FAC_A','$ORG_A','ENC-8000001');
+ INSERT INTO clinical.lab_test (id,code,name) VALUES ('$OPS_TEST','K-8001','Serum potassium');
+ INSERT INTO clinical.lab_order (id,encounter_id,organisation_id,facility_id,reference)
+ VALUES ('$OPS_ORDER','$OPS_ENC','$ORG_A','$FAC_A','LAB-8000001');
+ INSERT INTO clinical.lab_order_item (id,lab_order_id,lab_test_id,organisation_id,facility_id)
+ VALUES ('$OPS_ORDERITEM','$OPS_ORDER','$OPS_TEST','$ORG_A','$FAC_A');
+ INSERT INTO clinical.lab_sample (id,lab_order_item_id,organisation_id,facility_id,accession_number,sample_type)
+ VALUES ('$OPS_SAMPLE','$OPS_ORDERITEM','$ORG_A','$FAC_A','A80000001','Serum');"
+
+must_fail "a charge whose total disagrees with its own rate is refused" \
+"INSERT INTO fin.charge (id,organisation_id,facility_id,description,quantity,unit_price_minor,amount_minor,service_date)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','Consultation',2,150000,999999,'2026-09-14');"
+
+must_succeed "a charge that agrees is accepted" \
+"INSERT INTO fin.charge (id,organisation_id,facility_id,description,quantity,unit_price_minor,amount_minor,service_date)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','Consultation',2,150000,300000,'2026-09-14');"
+
+must_fail "a waived charge with no reason is refused" \
+"INSERT INTO fin.charge (id,organisation_id,facility_id,description,quantity,unit_price_minor,amount_minor,service_date,status)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','Waived consultation',1,150000,150000,'2026-09-14','WAIVED');"
+
+must_fail "a verified result with no verifier is refused" \
+"INSERT INTO clinical.lab_result (id,sample_id,lab_test_id,organisation_id,facility_id,numeric_value,status)
+ VALUES (gen_random_uuid(),'$OPS_SAMPLE','$OPS_TEST','$ORG_A','$FAC_A',7.2,'VERIFIED');"
+
+must_succeed "a preliminary result is accepted" \
+"INSERT INTO clinical.lab_result (id,sample_id,lab_test_id,organisation_id,facility_id,numeric_value,status,flag)
+ VALUES (gen_random_uuid(),'$OPS_SAMPLE','$OPS_TEST','$ORG_A','$FAC_A',7.2,'PRELIMINARY','CRITICAL_HIGH');"
+
+must_succeed "a sample can be rejected" \
+"UPDATE clinical.lab_sample SET rejected_at=now(), rejection_reason='Haemolysed' WHERE id='$OPS_SAMPLE';"
+
+must_fail "a result on a rejected sample is refused" \
+"INSERT INTO clinical.lab_result (id,sample_id,lab_test_id,organisation_id,facility_id,numeric_value,status)
+ VALUES (gen_random_uuid(),'$OPS_SAMPLE','$OPS_TEST','$ORG_A','$FAC_A',4.2,'PRELIMINARY');"
+
+# On a FRESH sample: the rejected-sample trigger above would otherwise refuse
+# this for the wrong reason, and the test would pass without testing anything.
+OPS_SAMPLE2=ffffffff-3333-0000-0000-000000000007
+
+must_succeed "a second, usable sample is taken" \
+"INSERT INTO clinical.lab_sample (id,lab_order_item_id,organisation_id,facility_id,accession_number,sample_type)
+ VALUES ('$OPS_SAMPLE2','$OPS_ORDERITEM','$ORG_A','$FAC_A','A80000002','Serum');"
+
+must_fail "a result amendment with no reason is refused" \
+"INSERT INTO clinical.lab_result (id,sample_id,lab_test_id,organisation_id,facility_id,numeric_value,status,amends_id)
+ VALUES (gen_random_uuid(),'$OPS_SAMPLE2','$OPS_TEST','$ORG_A','$FAC_A',4.2,'PRELIMINARY',gen_random_uuid());"
+
+must_fail "a payment of zero is refused" \
+"INSERT INTO fin.payment (id,organisation_id,facility_id,reference,direction,amount_minor,method)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','PAY-Z0001','INBOUND',0,'CASH');"
+
+echo
 echo "=== Row-level security (ADR 0005) ==="
 echo "  (run as chc_app, which does NOT bypass RLS)"
 

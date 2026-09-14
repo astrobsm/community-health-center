@@ -35,7 +35,8 @@
     "smoke:partnership": "bash scripts/smoke-partnership.sh",
     "smoke:documents": "bash scripts/smoke-documents.sh",
     "smoke:execution": "bash scripts/smoke-execution.sh",
-    "smoke:clinical": "bash scripts/smoke-clinical.sh"
+    "smoke:clinical": "bash scripts/smoke-clinical.sh",
+    "smoke:operations": "bash scripts/smoke-operations.sh"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1131.0",

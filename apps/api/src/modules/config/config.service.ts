@@ -86,7 +86,20 @@ export class ConfigService {
 
   async json<T extends object>(key: string, fallback: T, facilityId?: string): Promise<T> {
     const value = await this.get<unknown>(key, fallback, facilityId);
-    if (value && typeof value === 'object') return { ...fallback, ...(value as object) } as T;
+
+    // An ARRAY fallback must come back an array. Spreading one into an object
+    // literal yields {0: ..., 1: ...}, which reaches the caller as something
+    // that is no longer a list and fails on its first .map().
+    if (Array.isArray(fallback)) {
+      return (Array.isArray(value) ? value : fallback) as T;
+    }
+
+    // An object setting merges over its default, so a facility overriding one
+    // threshold does not have to restate the rest.
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return { ...fallback, ...(value as object) } as T;
+    }
+
     return fallback;
   }
 
