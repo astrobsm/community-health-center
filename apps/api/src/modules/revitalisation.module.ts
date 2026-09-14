@@ -11,6 +11,7 @@ import { BaselineService } from './baseline/baseline.service';
 import { CapexController } from './capex/capex.controller';
 import { CapexService } from './capex/capex.service';
 import { ConfigService } from './config/config.service';
+import { AssetService } from './project/asset.service';
 import { ContractService } from './document/contract.service';
 import { DocumentContextService } from './document/document-context.service';
 import { ContractController, DocumentController } from './document/document.controller';
@@ -26,6 +27,10 @@ import { NeedController, RecommendationController } from './needs/needs.controll
 import { NeedsService } from './needs/needs.service';
 import { PartnershipController } from './partnership/partnership.controller';
 import { PartnershipService } from './partnership/partnership.service';
+import { ProcurementController } from './procurement/procurement.controller';
+import { ProcurementService } from './procurement/procurement.service';
+import { AssetController, ProjectController } from './project/project.controller';
+import { ProjectService } from './project/project.service';
 import { ComplianceController, RiskController } from './quality/quality.controller';
 import { QualityService } from './quality/quality.service';
 
@@ -39,6 +44,8 @@ import { QualityService } from './quality/quality.service';
  *   capex     <- needs
  *   partnership <- financial-model (the terms are negotiated against a model)
  *   quality   <- sits above them all (L4): risk and compliance registers
+ *   project   <- capex (a project delivers a costed recommendation)
+ *   procurement <- project; asset <- procurement (a receipt creates an asset)
  *   document  <- L4: reads from every domain module below it and writes none
  *   config    <- everything above it
  *
@@ -65,6 +72,9 @@ import { QualityService } from './quality/quality.service';
     PartnershipController,
     DocumentController,
     ContractController,
+    ProjectController,
+    AssetController,
+    ProcurementController,
   ],
   providers: [
     {
@@ -147,6 +157,22 @@ import { QualityService } from './quality/quality.service';
       ) => new DocumentService(env, prisma, context, storage, audit, config),
     },
     {
+      provide: ProjectService,
+      inject: [PrismaService, AuditService],
+      useFactory: (prisma: PrismaService, audit: AuditService) => new ProjectService(prisma, audit),
+    },
+    {
+      provide: AssetService,
+      inject: [PrismaService, AuditService],
+      useFactory: (prisma: PrismaService, audit: AuditService) => new AssetService(prisma, audit),
+    },
+    {
+      provide: ProcurementService,
+      inject: [PrismaService, AuditService, ConfigService],
+      useFactory: (prisma: PrismaService, audit: AuditService, config: ConfigService) =>
+        new ProcurementService(prisma, audit, config),
+    },
+    {
       provide: ContractService,
       inject: ['Env', PrismaService, StorageService, AuditService],
       useFactory: (env: Env, prisma: PrismaService, storage: StorageService, audit: AuditService) =>
@@ -165,6 +191,9 @@ import { QualityService } from './quality/quality.service';
     PartnershipService,
     DocumentService,
     ContractService,
+    ProjectService,
+    AssetService,
+    ProcurementService,
     ConfigService,
   ],
 })

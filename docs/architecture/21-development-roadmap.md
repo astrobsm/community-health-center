@@ -126,7 +126,7 @@ generation response states the format it produced rather than implying a PDF exi
 
 ---
 
-### Release 6 — Project execution
+### Release 6 — Project execution ✅
 
 Projects, phases, tasks with dependencies and critical path, milestones, project budgets and
 expenses, procurement (request → quotation → PO → GRN → invoice → payment), three-way match, asset
@@ -134,6 +134,18 @@ register, maintenance, commissioning, and before/during/after evidence.
 
 **Acceptance:** criterion E and F — procurement creates an asset; the asset becomes operational only
 when every commissioning check passes; a supplier invoice without a goods receipt cannot be paid.
+
+**Verified by:** 65 unit tests over the three-way match, the critical-path scheduler and the
+commissioning gate, and `npm run smoke:execution` — 71 checks end to end, in which ten capital units
+received become ten individually tagged assets, an asset is refused commissioning on four of five
+checks and accepted on five, and an invoice raised before anything arrived is blocked with
+`409 three-way-match-failed`. Database invariants: 70 (up from 54), including the payment trigger
+that refuses an unreceipted invoice whoever is calling.
+
+**Deferred with reason:** consumable lines create a goods-receipt line but not yet an inventory
+batch. Stock batches, FEFO and the stock ledger are Release 8; creating half a batch record now
+would leave `quantity_on_hand` disagreeing with the ledger from the first receipt. Capital lines —
+which the acceptance criterion turns on — create assets in full.
 
 ---
 

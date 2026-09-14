@@ -330,6 +330,103 @@ must_fail "a zero-value recovery event carries no information and is refused" \
  VALUES (gen_random_uuid(),'$PSHIP','$ORG_A','$FAC_A','RECOVERY',0,'2026-06-01');"
 
 echo
+echo
+echo "=== Execution: procurement, assets and commissioning (spec sections 21-22, 46) ==="
+
+SUPPLIER=cccccccc-1111-0000-0000-000000000001
+PO=cccccccc-1111-0000-0000-000000000002
+POLINE=cccccccc-1111-0000-0000-000000000003
+GRN=cccccccc-1111-0000-0000-000000000004
+INVOICE=cccccccc-1111-0000-0000-000000000005
+ASSET=cccccccc-1111-0000-0000-000000000006
+PROJECT=cccccccc-1111-0000-0000-000000000007
+PHASE=cccccccc-1111-0000-0000-000000000008
+TASK=cccccccc-1111-0000-0000-000000000009
+
+must_succeed "execution fixtures load" \
+"INSERT INTO exec.supplier (id,organisation_id,code,name)
+ VALUES ('$SUPPLIER','$ORG_A','SUP-T01','Test Supplier Ltd');
+ INSERT INTO exec.purchase_order (id,organisation_id,facility_id,supplier_id,reference,ordered_on,total_minor)
+ VALUES ('$PO','$ORG_A','$FAC_A','$SUPPLIER','PO-T0001','2026-09-01',500000);
+ INSERT INTO exec.purchase_order_line (id,purchase_order_id,organisation_id,description,quantity_ordered,unit_price_minor,line_total_minor,is_capital_item)
+ VALUES ('$POLINE','$PO','$ORG_A','Hospital bed',10,50000,500000,true);
+ INSERT INTO exec.goods_receipt (id,purchase_order_id,organisation_id,facility_id,reference,received_on)
+ VALUES ('$GRN','$PO','$ORG_A','$FAC_A','GRN-T0001','2026-09-10');
+ INSERT INTO exec.supplier_invoice (id,supplier_id,purchase_order_id,organisation_id,facility_id,invoice_number,invoice_date,amount_minor,total_minor)
+ VALUES ('$INVOICE','$SUPPLIER','$PO','$ORG_A','$FAC_A','INV-T0001','2026-09-11',500000,500000);
+ INSERT INTO exec.equipment_asset (id,facility_id,organisation_id,asset_tag,name,category)
+ VALUES ('$ASSET','$FAC_A','$ORG_A','AST-T0001','Hospital bed','EQUIPMENT');
+ INSERT INTO exec.capital_project (id,facility_id,organisation_id,reference,name,category,unplanned_reason)
+ VALUES ('$PROJECT','$FAC_A','$ORG_A','PRJ-T001','Roof works','BUILDING','Fixture for invariant tests.');
+ INSERT INTO exec.project_phase (id,project_id,organisation_id,sequence,name)
+ VALUES ('$PHASE','$PROJECT','$ORG_A',1,'Phase 1');
+ INSERT INTO exec.project_task (id,phase_id,organisation_id,facility_id,reference,name)
+ VALUES ('$TASK','$PHASE','$ORG_A','$FAC_A','T-T001','Strip the old roof');"
+
+must_fail "a received unit that is neither accepted nor rejected is refused" \
+"INSERT INTO exec.goods_receipt_line (id,goods_receipt_id,organisation_id,facility_id,description,quantity_received,quantity_accepted,quantity_rejected,unit_cost_minor)
+ VALUES (gen_random_uuid(),'$GRN','$ORG_A','$FAC_A','Hospital bed',10,8,0,50000);"
+
+must_fail "rejecting something without saying why is refused" \
+"INSERT INTO exec.goods_receipt_line (id,goods_receipt_id,organisation_id,facility_id,description,quantity_received,quantity_accepted,quantity_rejected,unit_cost_minor)
+ VALUES (gen_random_uuid(),'$GRN','$ORG_A','$FAC_A','Hospital bed',10,8,2,50000);"
+
+must_succeed "a receipt that accounts for every unit is accepted" \
+"INSERT INTO exec.goods_receipt_line (id,goods_receipt_id,purchase_order_line_id,organisation_id,facility_id,description,quantity_received,quantity_accepted,quantity_rejected,rejection_reason,unit_cost_minor,is_capital_item)
+ VALUES (gen_random_uuid(),'$GRN','$POLINE','$ORG_A','$FAC_A','Hospital bed',10,8,2,'Two frames arrived buckled.',50000,true);"
+
+must_fail "a purchase order line total that disagrees with its own rate is refused" \
+"INSERT INTO exec.purchase_order_line (id,purchase_order_id,organisation_id,description,quantity_ordered,unit_price_minor,line_total_minor)
+ VALUES (gen_random_uuid(),'$PO','$ORG_A','Drip stand',4,12500,99999);"
+
+must_fail "an asset cannot be commissioned with no commissioning record" \
+"UPDATE exec.equipment_asset SET commissioning_status='COMMISSIONED' WHERE id='$ASSET';"
+
+must_succeed "a commissioning record with four of five checks is accepted" \
+"INSERT INTO exec.commissioning_record (id,organisation_id,facility_id,asset_id,reference,functional_test_passed,safety_check_passed,staff_trained,consumables_available,utilities_connected)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','$ASSET','COM-T0001',true,true,true,true,false);"
+
+must_fail "but the asset still cannot be commissioned on four of five" \
+"UPDATE exec.equipment_asset SET commissioning_status='COMMISSIONED' WHERE id='$ASSET';"
+
+must_succeed "with all five, it can" \
+"INSERT INTO exec.commissioning_record (id,organisation_id,facility_id,asset_id,reference,functional_test_passed,safety_check_passed,staff_trained,consumables_available,utilities_connected)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','$ASSET','COM-T0002',true,true,true,true,true);
+ UPDATE exec.equipment_asset SET commissioning_status='COMMISSIONED' WHERE id='$ASSET';"
+
+must_fail "a task cannot be complete at less than 100%" \
+"UPDATE exec.project_task SET status='COMPLETED', percent_complete=80 WHERE id='$TASK';"
+
+must_fail "progress above 100% is refused" \
+"UPDATE exec.project_task SET percent_complete=120 WHERE id='$TASK';"
+
+must_fail "a task cannot depend on itself" \
+"INSERT INTO exec.project_task_dependency (id,task_id,predecessor_id,organisation_id)
+ VALUES (gen_random_uuid(),'$TASK','$TASK','$ORG_A');"
+
+# The headline control: an invoice with no goods receipt cannot be paid.
+PO2=cccccccc-1111-0000-0000-00000000000a
+INVOICE2=cccccccc-1111-0000-0000-00000000000b
+
+must_succeed "a second order and invoice, with nothing yet received" \
+"INSERT INTO exec.purchase_order (id,organisation_id,facility_id,supplier_id,reference,ordered_on,total_minor)
+ VALUES ('$PO2','$ORG_A','$FAC_A','$SUPPLIER','PO-T0002','2026-09-02',200000);
+ INSERT INTO exec.supplier_invoice (id,supplier_id,purchase_order_id,organisation_id,facility_id,invoice_number,invoice_date,amount_minor,total_minor)
+ VALUES ('$INVOICE2','$SUPPLIER','$PO2','$ORG_A','$FAC_A','INV-T0002','2026-09-12',200000,200000);"
+
+must_fail "an invoice with no goods receipt cannot be paid" \
+"INSERT INTO fin.payment (id,organisation_id,facility_id,reference,direction,amount_minor,method,supplier_invoice_id)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','PAY-T0001','OUTBOUND',200000,'BANK_TRANSFER','$INVOICE2');"
+
+must_succeed "an invoice with goods actually received can be" \
+"INSERT INTO fin.payment (id,organisation_id,facility_id,reference,direction,amount_minor,method,supplier_invoice_id)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','PAY-T0002','OUTBOUND',400000,'BANK_TRANSFER','$INVOICE');"
+
+must_succeed "a payment unrelated to any supplier invoice is unaffected" \
+"INSERT INTO fin.payment (id,organisation_id,facility_id,reference,direction,amount_minor,method)
+ VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','PAY-T0003','INBOUND',5000,'CASH');"
+
+echo
 echo "=== Row-level security (ADR 0005) ==="
 echo "  (run as chc_app, which does NOT bypass RLS)"
 

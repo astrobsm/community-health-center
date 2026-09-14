@@ -97,6 +97,11 @@ export const PERMISSIONS = [
   'billing.waive',
   'payment.receive',
   'payment.refund',
+  // Outbound payments to suppliers. Raising and approving are separate
+  // permissions because SEGREGATION_OF_DUTIES declares them a conflicting
+  // pair, and a rule nobody can hold is not a control.
+  'payment.raise',
+  'payment.approve',
   'finance.read',
   'finance.post',
   'finance.reverse',
@@ -216,6 +221,8 @@ export const ROLE_TEMPLATES: Record<RoleCode, { name: string; description: strin
       'config.write',
       'rbac.write',
       'capex.approve',
+      'payment.approve',
+      'procurement.approve',
       // Sealing Day 0 is irreversible and establishes the reference point for
       // the whole partnership, so it sits with the administrator rather than
       // the project manager who captured the assessment. Same reasoning for
@@ -522,6 +529,7 @@ export const ROLE_TEMPLATES: Record<RoleCode, { name: string; description: strin
       'billing.waive',
       'payment.receive',
       'payment.refund',
+      'payment.raise',
       'finance.read',
       'finance.post',
       'finance.reverse',
