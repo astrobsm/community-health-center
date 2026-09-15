@@ -71,7 +71,26 @@ export const envSchema = z
      */
     STORAGE_SERVER_SIDE_ENCRYPTION: booleanish.default(false),
 
+    /**
+     * The kill switch (doc 17 section 10).
+     *
+     * Off by default. Nothing else in the platform depends on this layer, and a
+     * deployment that never turns it on is a fully working deployment.
+     */
     AI_ENABLED: booleanish.default(false),
+    /**
+     * "deterministic" composes the summary from the retrieved figures by
+     * template: no network, no key, and no way to state a figure the queries
+     * did not return. "anthropic" calls a language model and requires a key.
+     */
+    AI_PROVIDER: z
+      .enum(['deterministic', 'anthropic', 'ungrounded-probe'])
+      .default('deterministic'),
+    AI_MODEL_ID: z.string().default('claude-opus-5'),
+    AI_API_KEY: z.string().optional(),
+    AI_BASE_URL: z.string().url().default('https://api.anthropic.com'),
+    AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().max(8192).default(1024),
+    AI_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
 
     /**
      * Blocks seeding of fake clinical and financial records (spec section 91).
@@ -108,6 +127,24 @@ export const envSchema = z
           path: ['ALLOW_DEMO_FIXTURES'],
           message:
             'ALLOW_DEMO_FIXTURES must be false in production. Fabricated clinical or financial records must never exist in a live facility.',
+        });
+      }
+      if (env.AI_PROVIDER === 'ungrounded-probe') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['AI_PROVIDER'],
+          message:
+            'The ungrounded probe exists only to prove that the grounding check rejects a bad response. ' +
+            'It deliberately states figures that are not in the data and must never run in a live facility.',
+        });
+      }
+      if (env.AI_ENABLED && env.AI_PROVIDER === 'anthropic' && !env.AI_API_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['AI_API_KEY'],
+          message:
+            'AI_PROVIDER is "anthropic" but no key is set. Set AI_API_KEY, or use the deterministic ' +
+            'provider, which needs neither a key nor a network.',
         });
       }
       if (!env.STORAGE_SERVER_SIDE_ENCRYPTION) {

@@ -5,7 +5,7 @@ the source of truth, and the architecture is built so that it cannot become one 
 
 ---
 
-## 1. Isolation by construction
+## 1. Isolation by construction — built in R11
 
 Isolation is a database grant, not a coding convention:
 
@@ -213,11 +213,16 @@ triggered it and can be dismissed with a reason — and dismissal patterns are t
 
 ## 11. Tests
 
-| Test | Asserts |
-|---|---|
-| `ai-no-write-access.spec.ts` | Every write attempt as `ai_reader` fails at the database |
-| `ai-grounding.spec.ts` | A figure absent from context causes rejection of the response |
-| `ai-injection.spec.ts` | Injected instructions in free-text fields change nothing |
-| `ai-labelling.spec.ts` | Every insight is persisted and rendered as `AI_GENERATED` |
-| `forecast-uncertainty.spec.ts` | No point estimate without an interval; refusal below minimum history |
-| `ai-disabled.spec.ts` | With AI off, every non-AI feature still works |
+| Test | Asserts | Where it lives |
+|---|---|---|
+| AI writes nothing | Every write attempt as `ai_reader` fails at the database | `scripts/verify-invariants.sh`, `scripts/smoke-ai.sh` |
+| Grounding | A figure absent from the context causes the response to be discarded | `src/modules/ai/domain/ai.spec.ts`, `scripts/smoke-ai.sh` |
+| Injection | Instructions inside free text are removed, reported, and change nothing | `src/modules/ai/domain/ai.spec.ts`, `scripts/smoke-ai.sh` |
+| Labelling | Every insight is stored and returned as `AI_GENERATED`, with its provenance | `scripts/verify-invariants.sh`, `scripts/smoke-ai.sh` |
+| Forecast uncertainty | No point estimate without an interval; refusal below minimum history | `src/modules/ai/domain/ai.spec.ts`, `scripts/smoke-ai.sh` |
+| AI disabled | With AI off, every non-AI feature still works | `scripts/smoke-ai.sh` |
+
+The end-to-end suite restarts the API four times, because the kill switch is boot configuration and
+a switch nobody throws is a claim. The rejection path is exercised by a provider named
+`ungrounded-probe`, which deliberately states figures that are not in the data; the environment
+schema refuses it in production.

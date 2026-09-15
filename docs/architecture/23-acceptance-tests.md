@@ -247,5 +247,5 @@ a clickable mock-up.
 | R8 | Criteria G, H, I; `no-negative-stock`, `journal-balance`, `cash-reconciliation` |
 | R9 | Criterion J ✅ — 56 unit tests, `smoke:people` (95 checks), 113 database invariants |
 | R10 | Criteria B, M ✅ — 50 unit tests, `smoke:analytics` (69 checks), 125 database invariants |
-| R11 | `ai-no-write-access`, `ai-grounding`, `ai-injection`, `ai-labelling`, `ai-disabled` |
+| R11 | ✅ — 50 unit tests, `smoke:ai` (66 checks), 142 database invariants |
 | Final | `acceptance/full-chain.e2e.ts` |

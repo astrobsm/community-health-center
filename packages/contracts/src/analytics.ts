@@ -190,3 +190,41 @@ export const dataQualityIssueSchema = z.object({
 });
 
 export type DataQualityIssue = z.infer<typeof dataQualityIssueSchema>;
+
+// -----------------------------------------------------------------------------
+// AI (spec §§53-54, doc 17)
+// -----------------------------------------------------------------------------
+
+export const aiAskSchema = z.object({
+  facilityId: uuidSchema,
+  question: z.string().min(3).max(500),
+  periodStart: isoDateSchema,
+  periodEnd: isoDateSchema,
+  /**
+   * Skip the router and name the capability directly.
+   *
+   * Useful from a menu of questions. Anything not in the approved list is
+   * refused; there is no path by which a caller supplies their own query.
+   */
+  capabilityId: z.string().max(100).optional(),
+});
+export type AiAsk = z.infer<typeof aiAskSchema>;
+
+export const aiReviewSchema = z.object({
+  insightId: uuidSchema,
+  outcome: z.enum(['ACCEPTED', 'REJECTED', 'EDITED']),
+  note: z.string().max(2000).optional(),
+});
+export type AiReview = z.infer<typeof aiReviewSchema>;
+
+export const aiForecastSchema = z.object({
+  facilityId: uuidSchema,
+  measure: z.enum(['ENCOUNTERS', 'REVENUE']),
+  /** Days of history to read. */
+  days: z.coerce.number().int().min(7).max(400).optional(),
+  /** Periods ahead. */
+  horizon: z.coerce.number().int().min(1).max(30).optional(),
+  /** 7 for a weekly cycle, 1 to fit no season at all. */
+  seasonLength: z.coerce.number().int().min(1).max(52).optional(),
+});
+export type AiForecast = z.infer<typeof aiForecastSchema>;

@@ -41,6 +41,15 @@ import { ProcurementController } from './procurement/procurement.controller';
 import { ProcurementService } from './procurement/procurement.service';
 import { AssetController, ProjectController } from './project/project.controller';
 import { ProjectService } from './project/project.service';
+import { AiController } from './ai/ai.controller';
+import { AiService } from './ai/ai.service';
+import { InsightService } from './ai/insight.service';
+import {
+  AnthropicProvider,
+  DeterministicNarrator,
+  UngroundedProbeProvider,
+  type LlmProvider,
+} from './ai/llm-provider';
 import { AnalyticsController, LineageController } from './analytics/analytics.controller';
 import { BillingController } from './billing/billing.controller';
 import { BillingService } from './billing/billing.service';
@@ -92,6 +101,9 @@ import { QualityService } from './quality/quality.service';
  *   analytics <- L5: dashboards, lineage, drill-down, benchmarking, data
  *                quality and search. Reads everything; writes nothing but the
  *                audit trail of who looked at what.
+ *   ai        <- L5: grounded generation over the analytics layer. Writes only
+ *                ai_insight, and the database role it reads with holds no
+ *                write permission on anything else.
  *   config    <- everything above it
  *
  * `baseline` depends on `evidence` (it must know what is still uploading) but
@@ -138,6 +150,7 @@ import { QualityService } from './quality/quality.service';
     AnalyticsController,
     LineageController,
     BillingController,
+    AiController,
   ],
   providers: [
     {
@@ -304,6 +317,39 @@ import { QualityService } from './quality/quality.service';
         new KpiService(prisma, audit, config),
     },
     {
+      // The provider is configuration (doc 17 section 10). The default needs
+      // no key and no network, and states no figure the queries did not return.
+      provide: 'LlmProvider',
+      inject: ['Env'],
+      useFactory: (env: Env): LlmProvider => {
+        if (env.AI_PROVIDER === 'anthropic') {
+          return new AnthropicProvider({
+            apiKey: env.AI_API_KEY ?? '',
+            modelId: env.AI_MODEL_ID,
+            baseUrl: env.AI_BASE_URL,
+            timeoutMs: env.AI_REQUEST_TIMEOUT_MS,
+          });
+        }
+
+        // Exists to prove the grounding check rejects, and refused in
+        // production by the environment schema.
+        if (env.AI_PROVIDER === 'ungrounded-probe') return new UngroundedProbeProvider();
+
+        return new DeterministicNarrator();
+      },
+    },
+    {
+      provide: AiService,
+      inject: ['Env', PrismaService, AuditService, 'LlmProvider'],
+      useFactory: (env: Env, prisma: PrismaService, audit: AuditService, provider: LlmProvider) =>
+        new AiService(env, prisma, audit, provider),
+    },
+    {
+      provide: InsightService,
+      inject: [PrismaService, ConfigService],
+      useFactory: (prisma: PrismaService, config: ConfigService) => new InsightService(prisma, config),
+    },
+    {
       provide: BillingService,
       inject: [PrismaService, AuditService, FinanceService],
       useFactory: (prisma: PrismaService, audit: AuditService, finance: FinanceService) =>
@@ -368,6 +414,8 @@ import { QualityService } from './quality/quality.service';
     ComparisonService,
     DataQualityService,
     BillingService,
+    AiService,
+    InsightService,
     ConfigService,
   ],
 })

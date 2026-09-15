@@ -38,7 +38,8 @@
     "smoke:clinical": "bash scripts/smoke-clinical.sh",
     "smoke:operations": "bash scripts/smoke-operations.sh",
     "smoke:people": "bash scripts/smoke-people.sh",
-    "smoke:analytics": "bash scripts/smoke-analytics.sh"
+    "smoke:analytics": "bash scripts/smoke-analytics.sh",
+    "smoke:ai": "bash scripts/smoke-ai.sh"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1131.0",

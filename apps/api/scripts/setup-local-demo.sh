@@ -71,6 +71,18 @@ GRANT USAGE ON SCHEMA analytics TO chc_app;
 GRANT SELECT ON analytics.daily_financial, analytics.view_refresh TO chc_app;
 REVOKE ALL ON analytics.mv_daily_financial FROM chc_app;
 ALTER ROLE chc_app NOBYPASSRLS;
+DO \$\$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='ai_reader') THEN CREATE ROLE ai_reader LOGIN PASSWORD 'aipw'; END IF;
+END \$\$;
+-- The AI role: SELECT on three de-identified views, and nothing else anywhere.
+-- Not a convention — the permission to write does not exist (doc 17 section 1).
+REVOKE ALL ON ALL TABLES IN SCHEMA core, assess, plan, exec, clinical, supply, fin, people, qual, audit FROM ai_reader;
+REVOKE ALL ON SCHEMA core, assess, plan, exec, clinical, supply, fin, people, qual, audit FROM ai_reader;
+GRANT USAGE ON SCHEMA analytics TO ai_reader;
+GRANT SELECT ON analytics.ai_daily_clinical, analytics.ai_daily_supply, analytics.ai_quality_summary TO ai_reader;
+REVOKE ALL ON analytics.mv_daily_financial, analytics.daily_financial FROM ai_reader;
+ALTER ROLE ai_reader NOBYPASSRLS;
+ALTER ROLE ai_reader SET default_transaction_read_only = on;
 " >/dev/null
 
 echo "==> Reference data"

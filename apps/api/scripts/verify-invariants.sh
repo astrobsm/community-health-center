@@ -693,6 +693,96 @@ must_succeed "the daily rollup agrees with the tables it was built from" "DO \$v
 must_fail "the application role cannot read the materialised view directly" "SET LOCAL ROLE chc_app; SELECT count(*) FROM analytics.mv_daily_financial;"
 
 echo
+echo "=== AI isolation: the permission to write does not exist (doc 17 section 1) ==="
+
+# Run as ai_reader. Every one of these must be refused by the database, not by
+# application code — the point is that a total compromise of the AI module still
+# writes nothing.
+ai_run() {
+  docker exec "$CONTAINER" psql -v ON_ERROR_STOP=1 -U ai_reader -d "$PGDATABASE" -q -c "$1" 2>&1
+}
+
+ai_must_fail() {
+  local name="$1" sql="$2" out
+  out=$(ai_run "$sql")
+  if [ $? -ne 0 ]; then
+    PASS=$((PASS + 1)); printf '  PASS  %s\n' "$name"
+    printf '        %s\n' "$(printf '%s' "$out" | grep -m1 -E 'ERROR' | cut -c1-120)"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s  <-- the AI role was ALLOWED to do this\n' "$name"
+  fi
+}
+
+if docker exec "$CONTAINER" psql -U "$PGUSER" -d "$PGDATABASE" -tAc "SELECT 1 FROM pg_roles WHERE rolname='ai_reader'" | grep -q 1; then
+  ai_must_fail "the AI role cannot read a patient" \
+  "SELECT count(*) FROM clinical.patient;"
+
+  ai_must_fail "the AI role cannot read the ledger" \
+  "SELECT count(*) FROM fin.journal_line;"
+
+  ai_must_fail "the AI role cannot write a clinical note" \
+  "INSERT INTO clinical.clinical_note (id,encounter_id,organisation_id,facility_id) VALUES (gen_random_uuid(),gen_random_uuid(),'$ORG_A','$FAC_A');"
+
+  ai_must_fail "the AI role cannot post to the ledger" \
+  "INSERT INTO fin.journal_entry (id,organisation_id,facility_id,financial_period_id,reference,entry_date) VALUES (gen_random_uuid(),'$ORG_A','$FAC_A','$PERIOD_OPEN','JE-AI',now());"
+
+  ai_must_fail "the AI role cannot change stock" \
+  "UPDATE supply.inventory_batch SET quantity_on_hand = 9999;"
+
+  ai_must_fail "the AI role cannot write its own insight row" \
+  "INSERT INTO qual.ai_insight (id,organisation_id,insight_type,content,model_id,prompt_hash,context_query_ids,context_hash) VALUES (gen_random_uuid(),'$ORG_A','SUMMARY','x','m','h','{q}','c');"
+
+  ai_must_fail "the AI role cannot read the daily financial rollup" \
+  "SELECT count(*) FROM analytics.daily_financial;"
+
+  out=$(ai_run "SELECT count(*) FROM analytics.ai_daily_clinical;")
+  if [ $? -eq 0 ]; then
+    PASS=$((PASS + 1)); printf '  PASS  the AI role can read the de-identified clinical view\n'
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  the AI role cannot read what it is meant to: %s\n' "$out"
+  fi
+else
+  printf '  SKIP  the ai_reader role does not exist in this database\n'
+fi
+
+echo
+echo "=== AI insights keep their label and their provenance (spec section 82) ==="
+
+AI_INSIGHT=ffffffff-6666-0000-0000-000000000001
+
+must_fail "an insight classified as anything but AI-generated is refused" \
+"INSERT INTO qual.ai_insight (id,organisation_id,insight_type,content,classification,model_id,prompt_hash,context_query_ids,context_hash)
+ VALUES (gen_random_uuid(),'$ORG_A','SUMMARY','Attendance rose.','ACTUAL','m','h','{kpi/x@v1}','c');"
+
+must_fail "an insight naming no source query is refused" \
+"INSERT INTO qual.ai_insight (id,organisation_id,insight_type,content,model_id,prompt_hash,context_query_ids,context_hash)
+ VALUES (gen_random_uuid(),'$ORG_A','SUMMARY','Attendance rose.','m','h','{}','c');"
+
+must_fail "an insight with no prompt or context hash is refused" \
+"INSERT INTO qual.ai_insight (id,organisation_id,insight_type,content,model_id,prompt_hash,context_query_ids,context_hash)
+ VALUES (gen_random_uuid(),'$ORG_A','SUMMARY','Attendance rose.','m','','{kpi/x@v1}','');"
+
+must_fail "a confidence outside 0 to 1 is refused" \
+"INSERT INTO qual.ai_insight (id,organisation_id,insight_type,content,model_id,prompt_hash,context_query_ids,context_hash,confidence)
+ VALUES (gen_random_uuid(),'$ORG_A','SUMMARY','Attendance rose.','m','h','{kpi/x@v1}','c',4.2);"
+
+must_succeed "a properly labelled insight is accepted" \
+"INSERT INTO qual.ai_insight (id,organisation_id,facility_id,insight_type,content,model_id,prompt_hash,context_query_ids,context_hash)
+ VALUES ('$AI_INSIGHT','$ORG_A','$FAC_A','SUMMARY','Attendance rose.','deterministic/narrator@v1','hash','{kpi/x@v1}','ctx');"
+
+must_fail "the text of an insight cannot be edited afterwards" \
+"UPDATE qual.ai_insight SET content='Something else entirely' WHERE id='$AI_INSIGHT';"
+
+must_fail "an insight cannot be reclassified into a fact" \
+"UPDATE qual.ai_insight SET classification='ACTUAL' WHERE id='$AI_INSIGHT';"
+
+must_fail "a review with nobody's name on it is refused" \
+"UPDATE qual.ai_insight SET review_outcome='ACCEPTED' WHERE id='$AI_INSIGHT';"
+
+must_succeed "a signed review is accepted" \
+"UPDATE qual.ai_insight SET review_outcome='ACCEPTED', reviewed_by='$FAC_A', reviewed_at=now() WHERE id='$AI_INSIGHT';"
+
+echo
 echo "=== Row-level security (ADR 0005) ==="
 echo "  (run as chc_app, which does NOT bypass RLS)"
 
