@@ -16,8 +16,12 @@ set -u
 
 API="${API_BASE:-http://127.0.0.1:3100}/api/v1"
 PGCONTAINER="${PGCONTAINER:-chc-mig-test}"
-ADMIN_EMAIL="${ADMIN_EMAIL:-'"$ADMIN_EMAIL"'}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-'"$ADMIN_PASSWORD"'}"
+# The administrator scripts/setup-local-demo.sh bootstraps. Defaulted rather
+# than referenced, because under `set -u` a default that expands the variable
+# it is defaulting fails before the first check runs — which is how this suite
+# spent several releases never executing.
+ADMIN_EMAIL="${ADMIN_EMAIL:-assessor@example.org}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-correct-horse-battery-staple}"
 PASS=0
 FAIL=0
 

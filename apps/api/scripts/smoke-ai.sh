@@ -94,7 +94,7 @@ start_api() {
   DATABASE_URL="postgresql://chc_migrator:testpw@localhost:55432/chc" \
   REDIS_URL="redis://localhost:56379" \
   STORAGE_ENDPOINT="http://127.0.0.1:59000" \
-  STORAGE_ACCESS_KEY=minioadmin STORAGE_SECRET_KEY=minioadmin \
+  STORAGE_ACCESS_KEY_ID=minioadmin STORAGE_SECRET_ACCESS_KEY=minioadmin \
   API_PORT=3100 AI_ENABLED="$ai_enabled" AI_PROVIDER="$provider" \
     nohup bash scripts/run-local.sh > "$API_LOG" 2>&1 &
   for _ in $(seq 1 60); do

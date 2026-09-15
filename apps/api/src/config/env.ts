@@ -147,6 +147,16 @@ export const envSchema = z
             'provider, which needs neither a key nor a network.',
         });
       }
+      if (!env.STORAGE_ACCESS_KEY_ID || !env.STORAGE_SECRET_ACCESS_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['STORAGE_ACCESS_KEY_ID'],
+          message:
+            'Object storage credentials are required in production. Without them the API starts and then ' +
+            'fails the first time anybody uploads evidence or generates a document — which is a worse ' +
+            'way to find out than a container that never came up.',
+        });
+      }
       if (!env.STORAGE_SERVER_SIDE_ENCRYPTION) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
