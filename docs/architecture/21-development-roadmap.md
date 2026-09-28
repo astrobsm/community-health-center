@@ -401,6 +401,17 @@ R0 ──► R1 ──► R2 ──► R3 ──► R4 ──► R5
 
 ## 4. Per-release engineering checklist
 
+Two of these were not met across the twelve releases, and both are recorded rather than quietly
+dropped:
+
+- **Responsive UI.** Releases 3 to 11 have no screens. The API, the domain logic and the database
+  invariants are complete and proved; the interface is not built. A reader deciding whether this can
+  run a facility needs that before anything else, so it is also the first thing the README says.
+- **OpenAPI, until now.** The document is generated from the router by
+  `npm run openapi --workspace @chc/api` and committed to `docs/api/`. It describes every route and
+  the permission it requires; request and response bodies stay in `packages/contracts`, where both
+  tiers validate against them, rather than being restated in a second notation that can disagree.
+
 ```
 [ ] Prisma schema + migration, reviewed
 [ ] Raw SQL migration for views/triggers/RLS where needed
@@ -413,7 +424,7 @@ R0 ──► R1 ──► R2 ──► R3 ──► R4 ──► R5
 [ ] Release acceptance test
 [ ] UI at 360/768/1280 px
 [ ] Offline behaviour where in scope
-[ ] OpenAPI regenerated and committed
+[ ] OpenAPI regenerated and committed  (npm run openapi --workspace @chc/api)
 [ ] Architecture docs updated in the same PR as the change
 [ ] Seed data marked is_system_managed; no fixtures reachable in production
 ```

@@ -92,6 +92,24 @@ infra/
 
 ---
 
+## What is built, and what is not
+
+All twelve releases are complete **on the server**: the schema, the domain logic, the API, the
+database invariants and the acceptance suites. 197 routes, every one of them behind a declared
+permission.
+
+**The web client covers Release 2 only.** Sign in, the facility list, field assessment and evidence
+capture — the offline journey an assessor walks in Isi-Uzo, which is the part that had to work
+without signal. Everything from Release 3 onward (planning, partnership, documents, EMR, pharmacy,
+laboratory, finance, people, analytics, AI) is reachable over the API and has no screens. Each
+release's checklist item for a responsive UI was deferred, deliberately and in writing, rather than
+met with something thin.
+
+That is the honest state of it. A facility could not yet be run from this software by a person who
+does not use `curl`.
+
+---
+
 ## Getting started
 
 Requires Node 22+, Docker, and npm 10+.
@@ -113,9 +131,18 @@ npm run dev                   # API on :3000, web on :5173
 | URL | Service |
 |---|---|
 | http://localhost:5173 | Web application |
-| http://localhost:3000/api/v1/docs | OpenAPI documentation (non-production only) |
+| http://localhost:3000/api/v1/meta/health | API health, with its database check |
 | http://localhost:9001 | MinIO console |
 | http://localhost:8025 | Mailpit |
+
+The API serves no documentation endpoint. The route surface is generated from the router and
+committed instead — [`docs/api/routes.md`](docs/api/routes.md) for every route and the permission it
+requires, [`docs/api/openapi.json`](docs/api/openapi.json) for the machine-readable form. Reading it
+needs no running server, and it cannot drift from the code because it is generated from it:
+
+```bash
+npm run openapi --workspace @chc/api
+```
 
 ---
 
@@ -129,9 +156,10 @@ npm run dev                   # API on :3000, web on :5173
 bash apps/api/scripts/setup-local-demo.sh
 bash apps/api/scripts/run-local.sh
 
-# In another shell, exercise the whole chain against the running API:
-bash apps/api/scripts/smoke-auth.sh         # 24 checks
-bash apps/api/scripts/smoke-assessment.sh   # 39 checks
+# In another shell, exercise the whole chain against the running API. Each suite
+# expects a freshly built database — one run on a database another has used
+# fails on references already taken, which is not a fault in the code:
+npm run smoke:all --workspace @chc/api      # all eleven suites, 687 checks, resetting between each
 
 # The field app, and the offline proof:
 npm run dev --workspace @chc/web            # http://127.0.0.1:5173
@@ -175,12 +203,39 @@ npm run infra:up|down      # docker compose
 # database, loads fixtures, and asserts that each database invariant refuses
 # what it must.
 npm run db:test-migrate --workspace @chc/api
+
+# The route surface, generated from the router. Needs no database and no Docker.
+npm run openapi --workspace @chc/api
 ```
+
+### The acceptance suites
+
+Every release ends in a suite that exercises its criteria against a running API, a real PostgreSQL, a
+real Redis and a real MinIO — never a mock. `smoke:all` runs them in order, rebuilding the database
+between each, and is the thing to reach for before a release.
+
+| Suite | Checks | Proves |
+|---|---|---|
+| `smoke:auth` | 24 | Sign-in, MFA enrolment, token refresh, lockout, session revocation |
+| `smoke:assessment` | 39 | Criterion A — assessment becomes baseline; evidence reaches object storage |
+| `smoke:planning` | 67 | Findings become needs, needs become costed recommendations, the five-year model |
+| `smoke:partnership` | 57 | Criterion K — the waterfall, capital recovery, and a renegotiation that cannot reach back |
+| `smoke:documents` | 63 | Provenance, completeness gating, immutable versions, the MOU draft banner |
+| `smoke:execution` | 71 | Criteria C–F — finding to project to purchase order to asset to commissioned service |
+| `smoke:clinical` | 62 | Consent gating, the amendment chain, the clinical timeline |
+| `smoke:operations` | 74 | Criteria G–I — dispensing moves stock, charges and the ledger in one transaction |
+| `smoke:people` | 95 | Criterion J — attendance feeds performance feeds incentive; volume alone cannot pay |
+| `smoke:analytics` | 69 | Criteria B and M — every figure drills to its rows; the baseline comparison reconciles |
+| `smoke:ai` | 66 | The AI role writes nothing; an ungrounded figure is rejected; the kill switch works |
+
+**687 checks, all passing**, most recently against PostgreSQL 16 on 28 September 2026.
 
 ### What the acceptance gate proves
 
 The guarantees this product rests on live in the database, not in application code, so they hold
-even when the ORM is bypassed. `db:test-migrate` asserts all 28 of them against a real PostgreSQL:
+even when the ORM is bypassed. `db:test-migrate` asserts all **142** of them against a real
+PostgreSQL — each one attempting the forbidden operation and checking that it is refused, and
+refused *for the right reason*:
 
 | Area | Asserted |
 |---|---|
@@ -192,6 +247,11 @@ even when the ORM is bypassed. `db:test-migrate` asserts all 28 of them against 
 | Baseline | A sealed baseline metric cannot be edited or deleted |
 | Clinical | BMI and EDD are computed by the database; impossible vitals are rejected |
 | Staffing | Overlapping primary postings are refused |
+| Billing | An invoice cannot be paid more than it asks; its recorded payments equal the allocations against it; a payment cannot be applied twice |
+| People | An incentive's approver is never its computer; its total equals the components that explain it; a manual attendance entry says why |
+| Quality | A closed incident has a root cause; a completed action was verified; an anonymous complaint carries no name |
+| Analytics | The cached daily rollup agrees with the tables it was built from; the app role cannot reach the materialised view row-level security cannot protect |
+| AI | Every write attempt as the AI role is refused; an insight cannot lose its label, its provenance, or be edited after the fact |
 | Tenancy | Another tenant sees zero rows; with no scope set, nothing is visible (fails closed) |
 
 ---
@@ -203,18 +263,22 @@ Twelve controlled releases, defined in
 
 | | Release | Status |
 |---|---|---|
-| 0 | Architecture, schema, security baseline | **complete** — 28 invariants verified against a real PostgreSQL |
-| 1 | Foundation — auth, org, facility, users, roles, audit | **complete** — 24 checks verified end to end |
-| 2 | Field assessment, evidence, baseline | **complete** — 39 API checks + 3 offline E2E specs |
-| 3 | Planning — needs, CAPEX, risk, financial model | |
-| 4 | Partnership — revenue models, capital recovery | |
-| 5 | Documents — proposal, letters, MOU, reports | |
-| 6 | Project execution — procurement, assets, commissioning | |
-| 7 | EMR — patients, encounters, clinical, referrals | |
-| 8 | Operations — laboratory, pharmacy, inventory, billing, finance | |
-| 9 | People and quality — HR, attendance, performance, KPI | |
-| 10 | Analytics — dashboards, comparisons, forecasting | |
-| 11 | AI — assistant, anomaly detection, predictive analytics | |
+| 0 | Architecture, schema, security baseline | **complete** — 142 invariants verified against a real PostgreSQL |
+| 1 | Foundation — auth, org, facility, users, roles, audit | **complete** — 24 checks end to end |
+| 2 | Field assessment, evidence, baseline | **complete** — 39 API checks + the offline E2E suite. **The only release with screens.** |
+| 3 | Planning — needs, CAPEX, risk, financial model | **complete** — 67 checks. API only |
+| 4 | Partnership — revenue models, capital recovery | **complete** — 57 checks. API only |
+| 5 | Documents — proposal, letters, MOU, reports | **complete** — 63 checks. API only |
+| 6 | Project execution — procurement, assets, commissioning | **complete** — 71 checks. API only |
+| 7 | EMR — patients, encounters, clinical, referrals | **complete** — 62 checks. API only |
+| 8 | Operations — laboratory, pharmacy, inventory, finance | **complete** — 74 checks. API only |
+| 9 | People and quality — HR, attendance, performance, KPI | **complete** — 95 checks. API only |
+| 10 | Analytics — dashboards, drill-down, lineage, billing | **complete** — 69 checks. API only |
+| 11 | AI — assistant, anomaly detection, predictive analytics | **complete** — 66 checks. API only |
+
+Billing — invoices, payments and waivers — was built in Release 10 rather than Release 8. Release 8
+recorded charges and the ledger; nothing created an invoice or a patient payment until criterion M
+needed the chain from care to money to be walkable end to end.
 
 The field PWA ships with Release 2: encrypted offline store, dependency-ordered outbox, a lock
 screen, and an always-visible sync status strip. Acceptance criterion N ("the system can operate
@@ -222,6 +286,10 @@ offline") is verified on a Pixel 7 profile against a real API and database.
 
 A release ships only when it satisfies all nine Definition-of-Done criteria (migrations, validation,
 permissions, audit, tests, error handling, responsive UI, offline where required, documentation).
+
+**One of the nine was not met, in nine releases: the responsive UI.** Releases 3 to 11 have no
+screens. That is recorded here rather than in a backlog nobody reads, because a reader deciding
+whether this software can run a facility needs to know it before they read anything else.
 
 ---
 
